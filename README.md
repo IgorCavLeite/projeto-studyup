@@ -19,4 +19,3 @@ O **StudyUp** é uma ferramenta desenvolvida para auxiliar estudantes na organiz
 2. Inicie o app: `streamlit run app.py`
 
 ---
-*Projeto desenvolvido como parte dos estudos de ADS.*

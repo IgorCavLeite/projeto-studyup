@@ -8,8 +8,8 @@ from database.connection import (
     adicionar_topico, 
     listar_topicos_por_disciplina,
     registrar_desempenho,
-    adicionar_flashcard,       # <--- NOVO
-    listar_flashcards_por_topico # <--- NOVO
+    adicionar_flashcard,       
+    listar_flashcards_por_topico
 )
 from logic.pomodoro import formatar_tempo
 
