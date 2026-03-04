@@ -1,0 +1,8 @@
+/* Força o cursor de 'mãozinha' em todos os seletores e botões */
+div[data-baseweb="select"] {
+    cursor: pointer !important;
+}
+
+button {
+    cursor: pointer !important;
+}
