@@ -13,6 +13,22 @@ from database.connection import (
 )
 from logic.pomodoro import formatar_tempo
 
+import streamlit as st
+from login import desenhar_tela_login  # 1. Importa o seu arquivo
+
+# 2. Verifica se o usuário já logou
+if 'logado' not in st.session_state:
+    st.session_state['logado'] = False
+
+# 3. Se não logou, mostra sua tela e para a execução do resto
+if not st.session_state['logado']:
+    desenhar_tela_login()
+    st.stop() 
+
+# --- A partir daqui começa o código original do projeto ---
+st.title("🚀 StudyUp - Gerenciador de Estudos")
+
+
 st.set_page_config(page_title="StudyUp", layout="wide")
 
 # CSS para forçar o cursor de mãozinha
