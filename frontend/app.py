@@ -1,3 +1,11 @@
+import sys
+import os
+
+# Adiciona a pasta raiz ao sistema de caminhos do Python
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import streamlit as st
+
 import streamlit as st
 import plotly.express as px
 import time
