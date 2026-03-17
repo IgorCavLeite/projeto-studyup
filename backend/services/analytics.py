@@ -28,6 +28,10 @@ def obter_questoes_resolvidas_hoje():
     total = cursor.fetchone()[0]
     conn.close()
     return int(total)
+
+
+def buscar_alertas_revisao():
+    """Busca tópicos que precisam de revisão hoje ou estão atrasados."""
     conn = sqlite3.connect(DB_PATH)
     query = '''
         SELECT d.nome as Disciplina, t.nome as Topico, s.proxima_revisao
@@ -39,4 +43,4 @@ def obter_questoes_resolvidas_hoje():
     '''
     df = pd.read_sql_query(query, conn)
     conn.close()
-    return df   
+    return df
