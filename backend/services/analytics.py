@@ -1,7 +1,6 @@
 import sqlite3
 import pandas as pd
-
-DB_PATH = "data/studyup.db"
+from backend.database.connection import DB_PATH
 
 def buscar_dados_progresso():
     conn = sqlite3.connect(DB_PATH)
@@ -16,8 +15,19 @@ def buscar_dados_progresso():
     conn.close()
     return df
 
-def buscar_alertas_revisao():
-    """Busca tópicos que precisam de revisão hoje ou estão atrasados."""
+
+def obter_questoes_resolvidas_hoje():
+    """Retorna o total de questões respondidas nas sessões de hoje."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COALESCE(SUM(questoes_total), 0)
+        FROM sessoes
+        WHERE DATE(data_sessao) = DATE('now')
+    """)
+    total = cursor.fetchone()[0]
+    conn.close()
+    return int(total)
     conn = sqlite3.connect(DB_PATH)
     query = '''
         SELECT d.nome as Disciplina, t.nome as Topico, s.proxima_revisao

@@ -148,5 +148,19 @@ def listar_flashcards_por_topico(topico_id):
     conn.close()
     return dados
 
+
+# --- UTILITÁRIOS DE CONEXÃO ---
+
+def checar_conexao() -> bool:
+    """Verifica se o banco de dados está acessível."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("SELECT 1")
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 # Garante que o banco seja criado ao importar este arquivo pela primeira vez
 init_db()
