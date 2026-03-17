@@ -1,18 +1,35 @@
 import sqlite3
-import os  # <--- ESSA LINHA É A QUE ESTÁ FALTANDO
+import os
 from datetime import datetime, timedelta
 
-DB_PATH = "data/studyup.db"
+# --- CONFIGURAÇÃO DE CAMINHO DINÂMICO ---
+# Isso garante que o banco de dados seja criado na mesma pasta deste arquivo
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "studyup.db")
 
 def init_db():
-    if not os.path.exists('data'):
-        os.makedirs('data')
-        
+    """Inicializa o banco de dados e cria todas as tabelas necessárias."""
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor() # A definição do cursor acontece aqui dentro
+    cursor = conn.cursor()
 
-    cursor.execute('CREATE TABLE IF NOT EXISTS disciplinas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL UNIQUE)')
+    # 1. Tabela de Usuários (Nova para o sistema de login)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            senha TEXT NOT NULL
+        )
+    ''')
 
+    # 2. Tabela de Disciplinas
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS disciplinas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            nome TEXT NOT NULL UNIQUE
+        )
+    ''')
+
+    # 3. Tabela de Tópicos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS topicos (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -23,6 +40,7 @@ def init_db():
         )
     ''')
 
+    # 4. Tabela de Sessões de Estudo/Desempenho
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sessoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -36,7 +54,7 @@ def init_db():
         )
     ''')
 
-    # --- NOVA TABELA DE FLASHCARDS ---
+    # 5. Tabela de Flashcards
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS flashcards (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,25 +68,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- FUNÇÕES DE FLASHCARDS ---
+# --- FUNÇÕES DE USUÁRIO ---
 
-def adicionar_flashcard(topico_id, pergunta, resposta):
+def validar_login(username, senha_hash):
+    """Verifica se as credenciais existem no banco."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO flashcards (topico_id, pergunta, resposta) VALUES (?, ?, ?)', 
-                   (topico_id, pergunta, resposta))
-    conn.commit()
+    cursor.execute('SELECT * FROM usuarios WHERE username = ? AND senha = ?', (username, senha_hash))
+    user = cursor.fetchone()
     conn.close()
+    return user
 
-def listar_flashcards_por_topico(topico_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM flashcards WHERE topico_id = ?', (topico_id,))
-    dados = cursor.fetchall()
-    conn.close()
-    return dados
-
-# --- MANTENHA AS OUTRAS FUNÇÕES ABAIXO (adicionar_disciplina, registrar_desempenho, etc.) ---
+# --- FUNÇÕES DE DISCIPLINAS E TÓPICOS ---
 
 def adicionar_disciplina(nome):
     try:
@@ -78,7 +89,7 @@ def adicionar_disciplina(nome):
         conn.commit()
         conn.close()
         return True
-    except:
+    except sqlite3.IntegrityError:
         return False
 
 def listar_disciplinas():
@@ -104,10 +115,14 @@ def listar_topicos_por_disciplina(disciplina_id):
     conn.close()
     return dados
 
+# --- FUNÇÕES DE DESEMPENHO E FLASHCARDS ---
+
 def registrar_desempenho(topico_id, questoes, acertos):
     percentual = (acertos / questoes) * 100 if questoes > 0 else 0
+    # Regra de negócio simples para revisão
     dias_revisao = 7 if percentual >= 75 else 1
     data_revisao = (datetime.now() + timedelta(days=dias_revisao)).date()
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -117,4 +132,21 @@ def registrar_desempenho(topico_id, questoes, acertos):
     conn.commit()
     conn.close()
 
+def adicionar_flashcard(topico_id, pergunta, resposta):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO flashcards (topico_id, pergunta, resposta) VALUES (?, ?, ?)', 
+                   (topico_id, pergunta, resposta))
+    conn.commit()
+    conn.close()
+
+def listar_flashcards_por_topico(topico_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM flashcards WHERE topico_id = ?', (topico_id,))
+    dados = cursor.fetchall()
+    conn.close()
+    return dados
+
+# Garante que o banco seja criado ao importar este arquivo pela primeira vez
 init_db()
