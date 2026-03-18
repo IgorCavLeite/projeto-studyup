@@ -16,6 +16,6 @@ O **StudyUp** é uma ferramenta desenvolvida para auxiliar estudantes na organiz
 
 ## 💻 Como rodar
 1. Instale as dependências: `pip install -r requirements.txt`
-2. Inicie o app: `streamlit run app.py`
+2. Inicie o app: `python -m streamlit run frontend/app.py`
 
 ---
