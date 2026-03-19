@@ -6,7 +6,7 @@ from backend.database.connection import DB_PATH
 def gerar_hash(senha):
     """
     Transforma a senha em um resumo criptográfico (Hash).
-    Isso é padrão de segurança em ADS para evitar salvar senhas em texto puro.
+    Isso é padrão de segurança para evitar salvar senhas em texto puro.
     """
     return hashlib.sha256(senha.encode()).hexdigest()
 
@@ -21,7 +21,7 @@ def cadastrar_usuario(username, senha):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Geramos o hash da senha antes de salvar
+        # Gerar o hash da senha antes de salvar
         senha_criptografada = gerar_hash(senha)
         
         cursor.execute('INSERT INTO usuarios (username, senha) VALUES (?, ?)', 

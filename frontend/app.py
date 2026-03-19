@@ -74,7 +74,7 @@ from backend.services.pomodoro import formatar_tempo
 # --- IMPORTAÇÕES DO FRONTEND ---
 from frontend.components.auth_ui import desenhar_tela_login
 
-# 1. Configuração inicial da página
+# 1. Configuracão inicial da página
 st.set_page_config(page_title="StudyUp - Pro", layout="wide", page_icon="🚀")
 
 # 2. Carregar CSS customizado (Mãozinha no cursor)
