@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 import random
 
-
+# olá, aqui é o app.py do frontend. Ele é responsável por toda a interface do usuário, utilizando Streamlit para criar uma experiência interativa e visualmente agradável. O código está organizado em seções para facilitar a leitura e manutenção.
 def _atualizar_topico_callback(topico_id: int):
     """Callback do Streamlit para atualizar o status de conclusão de um tópico."""
     chave = f"topico_{topico_id}"
