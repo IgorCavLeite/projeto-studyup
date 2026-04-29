@@ -3,7 +3,7 @@ import os
 from backend.services.analytics import buscar_dados_progresso
 
 # Configurar a API do Gemini
-genai.configure(api_key="AIzaSyBIzfGK-l1NyMdE-c1HKxv3OSPE2RUDO40")
+genai.configure(api_key=os.getenv("AIzaSyDkLFiOqORGiTuIctRORbl3X47GFv0_A-k"))
 
 # Modelo a ser usado
 model = genai.GenerativeModel('models/gemini-flash-lite-latest')
