@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "studyup.db")
 
+
 def init_db():
     """Inicializa o banco de dados e cria todas as tabelas necessárias."""
     conn = sqlite3.connect(DB_PATH)
@@ -83,16 +84,19 @@ def init_db():
 
 # --- FUNÇÕES DE USUÁRIO ---
 
+
 def validar_login(username, senha_hash):
     """Verifica se as credenciais existem no banco."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM usuarios WHERE username = ? AND senha = ?', (username, senha_hash))
+    cursor.execute(
+        'SELECT * FROM usuarios WHERE username = ? AND senha = ?', (username, senha_hash))
     user = cursor.fetchone()
     conn.close()
     return user
 
 # --- FUNÇÕES DE DISCIPLINAS E TÓPICOS ---
+
 
 def adicionar_disciplina(nome):
     try:
@@ -105,6 +109,7 @@ def adicionar_disciplina(nome):
     except sqlite3.IntegrityError:
         return False
 
+
 def listar_disciplinas():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -113,17 +118,21 @@ def listar_disciplinas():
     conn.close()
     return dados
 
+
 def adicionar_topico(disciplina_id, nome_topico):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO topicos (disciplina_id, nome) VALUES (?, ?)', (disciplina_id, nome_topico))
+    cursor.execute('INSERT INTO topicos (disciplina_id, nome) VALUES (?, ?)',
+                   (disciplina_id, nome_topico))
     conn.commit()
     conn.close()
+
 
 def listar_topicos_por_disciplina(disciplina_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    cursor.execute(
+        'SELECT * FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
     dados = cursor.fetchall()
     conn.close()
     return dados
@@ -133,7 +142,8 @@ def atualizar_status_topico(topico_id, status: bool):
     """Marca um tópico como concluído (True) ou não concluído (False)."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('UPDATE topicos SET concluido = ? WHERE id = ?', (1 if status else 0, topico_id))
+    cursor.execute('UPDATE topicos SET concluido = ? WHERE id = ?',
+                   (1 if status else 0, topico_id))
     conn.commit()
     conn.close()
 
@@ -142,14 +152,16 @@ def calcular_progresso_disciplina(disciplina_id):
     """Retorna a porcentagem de tópicos concluídos em uma disciplina."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    cursor.execute(
+        'SELECT COUNT(*) FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
     total = cursor.fetchone()[0] or 0
 
     if total == 0:
         conn.close()
         return 0
 
-    cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND concluido = 1', (disciplina_id,))
+    cursor.execute(
+        'SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND concluido = 1', (disciplina_id,))
     concluido = cursor.fetchone()[0] or 0
     conn.close()
     return round((concluido / total) * 100, 1)
@@ -179,7 +191,7 @@ def registrar_desempenho(topico_id, questoes, acertos):
     # Regra de negócio simples para revisão
     dias_revisao = 7 if percentual >= 75 else 1
     data_revisao = (datetime.now() + timedelta(days=dias_revisao)).date()
-    
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -189,18 +201,21 @@ def registrar_desempenho(topico_id, questoes, acertos):
     conn.commit()
     conn.close()
 
+
 def adicionar_flashcard(topico_id, pergunta, resposta):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO flashcards (topico_id, pergunta, resposta) VALUES (?, ?, ?)', 
+    cursor.execute('INSERT INTO flashcards (topico_id, pergunta, resposta) VALUES (?, ?, ?)',
                    (topico_id, pergunta, resposta))
     conn.commit()
     conn.close()
 
+
 def listar_flashcards_por_topico(topico_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM flashcards WHERE topico_id = ?', (topico_id,))
+    cursor.execute(
+        'SELECT * FROM flashcards WHERE topico_id = ?', (topico_id,))
     dados = cursor.fetchall()
     conn.close()
     return dados
@@ -284,8 +299,6 @@ def foi_estudada_hoje(disciplina_id):
     count = cursor.fetchone()[0]
     conn.close()
     return count > 0
-
-
 
 
 def checar_conexao() -> bool:
