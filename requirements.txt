@@ -2,3 +2,4 @@ streamlit
 pandas
 plotly
 google-generativeai
+streamlit-dnd

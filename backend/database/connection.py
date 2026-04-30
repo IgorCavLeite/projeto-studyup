@@ -65,6 +65,13 @@ def init_db():
         )
     ''')
 
+    # Garantir colunas históricas na tabela sessoes
+    try:
+        cursor.execute('ALTER TABLE sessoes ADD COLUMN data_sessao TEXT')
+    except sqlite3.OperationalError:
+        pass  # Coluna já existe
+
+
     # 6. Tabela de Cronograma Semanal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cronograma (
@@ -72,11 +79,41 @@ def init_db():
             disciplina_id INTEGER,
             dia_semana INTEGER NOT NULL,
             usuario_id INTEGER,
+            start_time TEXT,
+            duration INTEGER DEFAULT 60,
+            color TEXT DEFAULT '#4CAF50',
             FOREIGN KEY (disciplina_id) REFERENCES disciplinas (id),
-            FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
-            UNIQUE (disciplina_id, dia_semana)
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
         )
     ''')
+
+    # 7. Tabela de Compromissos Extras
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS compromissos_extras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            dia_semana INTEGER NOT NULL,
+            start_time TEXT,
+            duration INTEGER DEFAULT 60,
+            color TEXT DEFAULT '#FF9800',
+            usuario_id INTEGER,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+        )
+    ''')
+
+    # Alterar tabela cronograma para adicionar novas colunas se não existirem
+    try:
+        cursor.execute('ALTER TABLE cronograma ADD COLUMN start_time TEXT')
+    except sqlite3.OperationalError:
+        pass  # Coluna já existe
+    try:
+        cursor.execute('ALTER TABLE cronograma ADD COLUMN duration INTEGER DEFAULT 60')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute('ALTER TABLE cronograma ADD COLUMN color TEXT DEFAULT \'#4CAF50\'')
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()
@@ -183,9 +220,9 @@ def registrar_desempenho(topico_id, questoes, acertos):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO sessoes (topico_id, questoes_total, questoes_acerto, percentual, proxima_revisao) 
-        VALUES (?, ?, ?, ?, ?)
-    ''', (topico_id, questoes, acertos, percentual, data_revisao))
+        INSERT INTO sessoes (topico_id, questoes_total, questoes_acerto, percentual, proxima_revisao, data_sessao) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (topico_id, questoes, acertos, percentual, data_revisao, datetime.now()))
     conn.commit()
     conn.close()
 
@@ -208,18 +245,21 @@ def listar_flashcards_por_topico(topico_id):
 
 # --- FUNÇÕES DE CRONOGRAMA ---
 
-def salvar_cronograma(disciplina_id, dia_semana, usuario_id=None):
+def salvar_cronograma(disciplina_id, dia_semana, start_time=None, duration=60, color='#4CAF50', usuario_id=None):
     """
     Salva ou atualiza um cronograma para uma disciplina em um dia específico.
     dia_semana: 0=Segunda, 1=Terça, ..., 6=Domingo
+    start_time: string no formato 'HH:MM'
+    duration: duração em minutos
+    color: cor em hexadecimal
     """
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT OR REPLACE INTO cronograma (disciplina_id, dia_semana, usuario_id)
-            VALUES (?, ?, ?)
-        ''', (disciplina_id, dia_semana, usuario_id))
+            INSERT OR REPLACE INTO cronograma (disciplina_id, dia_semana, start_time, duration, color, usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (disciplina_id, dia_semana, start_time, duration, color, usuario_id))
         conn.commit()
         conn.close()
         return True
@@ -231,16 +271,16 @@ def salvar_cronograma(disciplina_id, dia_semana, usuario_id=None):
 def buscar_cronograma_usuario(usuario_id=None):
     """
     Retorna o cronograma de uma semana para um usuário.
-    Retorna lista de tuplas: (disciplina_id, disciplina_nome, dia_semana)
+    Retorna lista de tuplas: (id, disciplina_id, disciplina_nome, dia_semana, start_time, duration, color)
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT c.id, c.disciplina_id, d.nome, c.dia_semana
+        SELECT c.id, c.disciplina_id, d.nome, c.dia_semana, c.start_time, c.duration, c.color
         FROM cronograma c
         JOIN disciplinas d ON c.disciplina_id = d.id
         WHERE c.usuario_id = ? OR c.usuario_id IS NULL
-        ORDER BY c.dia_semana ASC
+        ORDER BY c.dia_semana ASC, c.start_time ASC
     ''', (usuario_id,))
     dados = cursor.fetchall()
     conn.close()
@@ -267,6 +307,52 @@ def remover_cronograma(cronograma_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM cronograma WHERE id = ?', (cronograma_id,))
+    conn.commit()
+    conn.close()
+
+
+def salvar_compromisso_extra(nome, dia_semana, start_time=None, duration=60, color='#FF9800', usuario_id=None):
+    """
+    Salva um compromisso extra.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO compromissos_extras (nome, dia_semana, start_time, duration, color, usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (nome, dia_semana, start_time, duration, color, usuario_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Erro ao salvar compromisso extra: {e}")
+        return False
+
+
+def buscar_compromissos_extras_usuario(usuario_id=None):
+    """
+    Retorna os compromissos extras de uma semana para um usuário.
+    Retorna lista de tuplas: (id, nome, dia_semana, start_time, duration, color)
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, nome, dia_semana, start_time, duration, color
+        FROM compromissos_extras
+        WHERE usuario_id = ? OR usuario_id IS NULL
+        ORDER BY dia_semana ASC, start_time ASC
+    ''', (usuario_id,))
+    dados = cursor.fetchall()
+    conn.close()
+    return dados
+
+
+def remover_compromisso_extra(compromisso_id):
+    """Remove um compromisso extra."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM compromissos_extras WHERE id = ?', (compromisso_id,))
     conn.commit()
     conn.close()
 

@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Adiciona a pasta raiz ao sistema de caminhos do Python
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from frontend.components.auth_ui import desenhar_tela_login
 from backend.services.ai_mentor import mentor_ia_resposta
 from backend.services.pomodoro import formatar_tempo
@@ -22,6 +28,9 @@ from backend.database.connection import (
     buscar_cronograma_usuario,
     obter_disciplinas_por_dia,
     remover_cronograma,
+    salvar_compromisso_extra,
+    buscar_compromissos_extras_usuario,
+    remover_compromisso_extra,
     foi_estudada_hoje,
 )
 import random
@@ -29,11 +38,6 @@ from datetime import datetime, timedelta
 import time
 import plotly.express as px
 import streamlit as st
-import sys
-import os
-
-# Adiciona a pasta raiz ao sistema de caminhos do Python
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 def _atualizar_topico_callback(topico_id: int):
@@ -59,6 +63,7 @@ FRASES_MOTIVACIONAIS = [
 
 DIAS_SEMANA = ["Segunda", "Terça", "Quarta",
                "Quinta", "Sexta", "Sábado", "Domingo"]
+DIAS_MAP = {dia: idx for idx, dia in enumerate(DIAS_SEMANA)}
 
 
 def obter_frase_motivacional():
@@ -98,7 +103,7 @@ else:
 
     # --- SIDEBAR (NAVEGAÇÃO) ---
     if 'pagina' not in st.session_state:
-        st.session_state['pagina'] = "Dashboard"
+        st.session_state['pagina'] = "Cronograma"
 
     if 'usuario' not in st.session_state:
         st.session_state['usuario'] = "Estudante"
@@ -266,6 +271,7 @@ else:
             # Pré-selecionar disciplina se vindo do Cronograma
             disciplina_padrao = st.session_state.get(
                 'disciplina_selecionada', None)
+            auto_start = st.session_state.pop('auto_start_pomodoro', False)
             indice_padrao = 0
             if disciplina_padrao and disciplina_padrao in dict_disc:
                 indice_padrao = list(dict_disc.keys()).index(disciplina_padrao)
@@ -283,7 +289,16 @@ else:
                 dict_topicos = {t[2]: t[0] for t in topicos}
                 esc_topico = st.selectbox("Tópico:", list(dict_topicos.keys()))
 
-                if st.button("Iniciar Foco (25min)"):
+                if auto_start:
+                    tempo = 25 * 60
+                    prog = st.progress(0)
+                    txt = st.empty()
+                    for s in range(tempo, -1, -1):
+                        txt.subheader(f"Restante: {formatar_tempo(s)}")
+                        prog.progress((tempo - s) / tempo)
+                        time.sleep(1)
+                    st.success("Fim do ciclo! Registre seu desempenho abaixo.")
+                elif st.button("Iniciar Foco (25min)"):
                     tempo = 25 * 60
                     prog = st.progress(0)
                     txt = st.empty()
@@ -444,85 +459,129 @@ else:
             # --- GRID SEMANAL ---
             st.subheader("📆 Sua Semana de Estudos")
 
-            # Agrupar disciplinas por dia
-            cronograma_por_dia = {i: [] for i in range(7)}
-            for item in cronograma:
-                # item: (id, disciplina_id, disciplina_nome, dia_semana)
-                dia = item[3]
-                cronograma_por_dia[dia].append(item)
-
-            # Calcular progresso diário
             dia_semana_atual = obter_numero_dia_semana()
-            disciplinas_hoje = cronograma_por_dia[dia_semana_atual]
-            estudadas_hoje = sum(1 for disc_id, _, _, _ in [(
-                item[1], item[2], item[3], item[0]) for item in disciplinas_hoje] if foi_estudada_hoje(disc_id))
-            total_hoje = len(disciplinas_hoje)
 
-            if total_hoje > 0:
-                progresso_hoje = (estudadas_hoje / total_hoje) * 100
-                st.metric("📊 Progresso de Hoje",
-                          f"{estudadas_hoje}/{total_hoje}", f"{int(progresso_hoje)}%")
-                st.progress(progresso_hoje / 100)
-            else:
-                st.info("Nenhuma disciplina agendada para hoje.")
+            col1, col2 = st.columns([1,3])
+            with col1:
+                view_mode = st.radio("Modo:", ["Semanal", "Diário"], key="view_mode")
+            with col2:
+                if view_mode == "Diário":
+                    dia_foco = st.selectbox("Dia:", DIAS_SEMANA, index=dia_semana_atual, key="dia_foco")
+                    dia_foco_idx = DIAS_MAP.get(dia_foco, dia_semana_atual)
+                else:
+                    dia_foco_idx = None
 
             st.divider()
 
-            # Grid de 7 colunas
-            colunas = st.columns(7)
+            # Metas do dia
+            if view_mode == "Diário" and dia_foco_idx == dia_semana_atual:
+                st.subheader("🎯 Metas de Hoje")
+                objetivo = st.text_area("Objetivo do Dia:", key="objetivo_hoje", height=100)
+                if st.button("💾 Salvar Meta"):
+                    # Save to session or db, for now session
+                    st.session_state['meta_hoje'] = objetivo
+                    st.success("Meta salva!")
 
-            for dia_idx, coluna in enumerate(colunas):
-                with coluna:
+            st.divider()
+
+            # Agrupar disciplinas e compromissos por dia
+            cronograma_por_dia = {i: [] for i in range(7)}
+            compromissos_por_dia = {i: [] for i in range(7)}
+            for item in cronograma:
+                # item: (id, disciplina_id, disciplina_nome, dia_semana, start_time, duration, color)
+                dia = int(item[3]) if item[3] is not None else 0
+                cronograma_por_dia[dia].append(item)
+            compromissos = buscar_compromissos_extras_usuario()
+            for item in compromissos:
+                # item: (id, nome, dia_semana, start_time, duration, color)
+                dia = int(item[2]) if item[2] is not None else 0
+                compromissos_por_dia[dia].append(item)
+
+            # Calcular progresso diário
+            dia_ref = dia_foco_idx if view_mode == "Diário" else dia_semana_atual
+            disciplinas_ref = cronograma_por_dia[dia_ref]
+            estudadas_ref = sum(1 for item in disciplinas_ref if foi_estudada_hoje(item[1]))
+            total_ref = len(disciplinas_ref)
+
+            if total_ref > 0:
+                progresso_ref = (estudadas_ref / total_ref) * 100
+                dia_nome_ref = DIAS_SEMANA[dia_ref]
+                st.metric(f"📊 Progresso de {dia_nome_ref}",
+                          f"{estudadas_ref}/{total_ref}", f"{int(progresso_ref)}%")
+                st.progress(progresso_ref / 100)
+            else:
+                st.info(f"Nenhuma disciplina agendada para {DIAS_SEMANA[dia_ref] if view_mode == 'Diário' else 'hoje'}.")
+
+            st.divider()
+
+            # Grid
+            if view_mode == "Semanal":
+                colunas = st.columns(7)
+                dias_a_mostrar = range(7)
+            else:
+                colunas = st.columns(1)
+                dias_a_mostrar = [dia_foco_idx]
+
+            for idx, dia_idx in enumerate(dias_a_mostrar):
+                with colunas[idx]:
                     dia_nome = DIAS_SEMANA[dia_idx]
                     eh_hoje = dia_idx == dia_semana_atual
 
                     # Destaque visual para hoje
                     if eh_hoje:
                         st.markdown(
-                            f"<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 15px; border-radius: 10px; text-align: center;'>", unsafe_allow_html=True)
+                            f"<div style='display: flex; justify-content: center; align-items: center; padding: 6px 12px; border-radius: 999px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-bottom: 10px;'>", unsafe_allow_html=True)
                         st.markdown(
-                            f"<h4 style='color: white; margin: 0;'>📍 {dia_nome}</h4>", unsafe_allow_html=True)
+                            f"<span style='color: white; font-weight: 700;'>📍 Hoje</span>", unsafe_allow_html=True)
                         st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown(
+                            f"<h4 style='text-align: center; margin-top: 0; margin-bottom: 4px;'>{dia_nome}</h4>", unsafe_allow_html=True)
                     else:
                         st.markdown(
                             f"<h4 style='text-align: center; margin-top: 0;'>{dia_nome}</h4>", unsafe_allow_html=True)
 
                     disciplinas_dia = cronograma_por_dia[dia_idx]
+                    compromissos_dia = compromissos_por_dia[dia_idx]
 
-                    if not disciplinas_dia:
+                    all_items = []
+                    for item in disciplinas_dia:
+                        all_items.append(('disciplina', item))
+                    for item in compromissos_dia:
+                        all_items.append(('compromisso', item))
+
+                    # Sort by start_time
+                    all_items.sort(key=lambda x: x[1][4] if x[0] == 'disciplina' else x[1][3] or '00:00')
+
+                    if not all_items:
                         st.markdown(
                             f"<p style='text-align: center; color: #999;'>-</p>", unsafe_allow_html=True)
                     else:
-                        for item in disciplinas_dia:
-                            cronograma_id, disc_id, disc_nome, _ = item
-                            estudada = foi_estudada_hoje(
-                                disc_id) if eh_hoje else False
-
-                            # Card com cor baseada no status
-                            if estudada:
-                                cor_bg = "#D4EDDA"
-                                cor_borda = "#28A745"
-                                simbolo = "✅"
-                            elif eh_hoje:
-                                cor_bg = "#FFF3CD"
-                                cor_borda = "#FF6B6B"
-                                simbolo = "⏳"
+                        for tipo, item in all_items:
+                            if tipo == 'disciplina':
+                                cronograma_id, disc_id, disc_nome, _, start_time, duration, color = item
+                                estudada = foi_estudada_hoje(disc_id) if eh_hoje else False
+                                simbolo = "✅" if estudada else ("⏳" if eh_hoje else "📌")
+                                nome = disc_nome
+                                bg_color = color or "#E9ECEF"
                             else:
-                                cor_bg = "#E9ECEF"
-                                cor_borda = "#6C757D"
-                                simbolo = "📌"
+                                comp_id, nome, _, start_time, duration, color = item
+                                simbolo = "📅"
+                                bg_color = color or "#FF9800"
+                                estudada = False
 
+                            time_info = f" ({start_time})" if start_time else ""
                             st.markdown(f"""
-                            <div style='background: {cor_bg}; border: 2px solid {cor_borda}; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 8px;'>
-                                <p style='margin: 0; font-size: 0.75rem; font-weight: bold; color: #333;'>{simbolo} {disc_nome}</p>
+                            <div style='background: {bg_color}; border: 2px solid #6C757D; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 8px;'>
+                                <p style='margin: 0; font-size: 0.75rem; font-weight: bold; color: #333;'>{simbolo} {nome}{time_info}</p>
                             </div>
                             """, unsafe_allow_html=True)
 
-                            # Botão de ação rápida para hoje
-                            if eh_hoje and not estudada:
+                            # Botão de ação para disciplinas hoje
+                            if tipo == 'disciplina' and eh_hoje and not estudada:
                                 if st.button(f"▶️ Iniciar", key=f"iniciar_{cronograma_id}"):
                                     st.session_state['pagina'] = "Pomodoro"
                                     st.session_state['disciplina_selecionada'] = disc_nome
+                                    st.session_state['auto_start_pomodoro'] = True
                                     st.rerun()
 
             st.divider()
@@ -534,7 +593,7 @@ else:
                 tab1, tab2 = st.tabs(["Adicionar", "Remover"])
 
                 with tab1:
-                    st.write("Escolha uma disciplina e o dia da semana:")
+                    st.write("Escolha uma disciplina, dia, horário e duração:")
                     disciplinas = listar_disciplinas()
                     if not disciplinas:
                         st.warning("Cadastre uma disciplina primeiro!")
@@ -544,16 +603,20 @@ else:
                             dict_disc.keys()), key="crono_disc")
                         esc_dia = st.selectbox(
                             "Dia da Semana:", DIAS_SEMANA, key="crono_dia")
+                        time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
+                        esc_time = st.selectbox("Horário de Início:", time_slots, key="crono_time")
+                        esc_duration = st.selectbox("Duração (min):", [30,60,90,120], key="crono_duration")
+                        color_options = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0']
+                        esc_color = st.selectbox("Cor:", color_options, key="crono_color")
 
                         if st.button("✅ Adicionar ao Cronograma"):
-                            dia_idx = DIAS_SEMANA.index(esc_dia)
-                            if salvar_cronograma(dict_disc[esc_disc], dia_idx):
+                            dia_idx = DIAS_MAP.get(esc_dia, 0)
+                            if salvar_cronograma(dict_disc[esc_disc], dia_idx, esc_time, esc_duration, esc_color):
                                 st.success(
-                                    f"✅ {esc_disc} adicionada para {esc_dia}!")
+                                    f"✅ {esc_disc} adicionada para {esc_dia} às {esc_time}!")
                                 st.rerun()
                             else:
-                                st.error(
-                                    "Esta disciplina já está agendada para este dia.")
+                                st.error("Erro ao adicionar.")
 
                 with tab2:
                     st.write("Remova disciplinas do seu cronograma:")
@@ -562,13 +625,88 @@ else:
                     else:
                         # Mostrar cronograma para remover
                         for item in cronograma:
-                            cron_id, disc_id, disc_nome, dia_sem = item
+                            cron_id, disc_id, disc_nome, dia_sem, start_time, duration, color = item
+                            time_info = f" às {start_time}" if start_time else ""
                             col1, col2 = st.columns([3, 1])
                             with col1:
                                 st.markdown(
-                                    f"📍 **{disc_nome}** - {DIAS_SEMANA[dia_sem]}")
+                                    f"📍 **{disc_nome}** - {DIAS_SEMANA[dia_sem]}{time_info}")
                             with col2:
-                                if st.button("🗑️", key=f"remove_{cron_id}"):
-                                    remover_cronograma(cron_id)
                                     st.success("Disciplina removida!")
                                     st.rerun()
+
+            st.divider()
+
+            # --- COMPROMISSOS EXTRAS ---
+            with st.expander("📅 Gerenciar Compromissos Extras"):
+                tab1, tab2 = st.tabs(["Adicionar", "Remover"])
+
+                with tab1:
+                    st.write("Adicione compromissos extras (ex: academia, almoço):")
+                    nome_comp = st.text_input("Nome do Compromisso:", key="comp_nome")
+                    esc_dia_comp = st.selectbox("Dia da Semana:", DIAS_SEMANA, key="comp_dia")
+                    time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
+                    esc_time_comp = st.selectbox("Horário de Início:", time_slots, key="comp_time")
+                    esc_duration_comp = st.selectbox("Duração (min):", [30,60,90,120], key="comp_duration")
+                    color_options = ['#FF9800', '#4CAF50', '#2196F3', '#E91E63', '#9C27B0']
+                    esc_color_comp = st.selectbox("Cor:", color_options, key="comp_color")
+
+                    if st.button("✅ Adicionar Compromisso"):
+                        dia_idx = DIAS_MAP.get(esc_dia_comp, 0)
+                        if salvar_compromisso_extra(nome_comp, dia_idx, esc_time_comp, esc_duration_comp, esc_color_comp):
+                            st.success(f"✅ {nome_comp} adicionado!")
+                            st.rerun()
+                        else:
+                            st.error("Erro ao adicionar.")
+
+                with tab2:
+                    st.write("Remova compromissos extras:")
+                    if not compromissos:
+                        st.info("Nenhum compromisso extra.")
+                    else:
+                        for item in compromissos:
+                            comp_id, nome, dia_sem, start_time, duration, color = item
+                            time_info = f" às {start_time}" if start_time else ""
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.markdown(f"📅 **{nome}** - {DIAS_SEMANA[dia_sem]}{time_info}")
+                            with col2:
+                                if st.button("🗑️", key=f"remove_comp_{comp_id}"):
+                                    remover_compromisso_extra(comp_id)
+                                    st.success("Compromisso removido!")
+                                    st.rerun()
+
+    # --- PÁGINA: CONFIGURAR CRONOGRAMA ---
+    elif st.session_state['pagina'] == "Configurar Cronograma":
+        st.header("⚙️ Configurar Cronograma")
+
+        st.write("Adicione suas disciplinas ao cronograma semanal.")
+
+        disciplinas = listar_disciplinas()
+        if not disciplinas:
+            st.warning("Cadastre uma disciplina primeiro!")
+            if st.button("📚 Ir para Disciplinas"):
+                st.session_state['pagina'] = "Cadastrar Disciplina"
+                st.rerun()
+        else:
+            dict_disc = {d[1]: d[0] for d in disciplinas}
+            esc_disc = st.selectbox("Disciplina:", list(dict_disc.keys()), key="setup_disc")
+            esc_dia = st.selectbox("Dia da Semana:", DIAS_SEMANA, key="setup_dia")
+            time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
+            esc_time = st.selectbox("Horário de Início:", time_slots, key="setup_time")
+            esc_duration = st.selectbox("Duração (min):", [30,60,90,120], key="setup_duration")
+            color_options = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0']
+            esc_color = st.selectbox("Cor:", color_options, key="setup_color")
+
+            if st.button("✅ Adicionar ao Cronograma"):
+                dia_idx = DIAS_MAP.get(esc_dia, 0)
+                if salvar_cronograma(dict_disc[esc_disc], dia_idx, esc_time, esc_duration, esc_color):
+                    st.success(f"✅ {esc_disc} adicionada para {esc_dia} às {esc_time}!")
+                    st.rerun()
+                else:
+                    st.error("Erro ao adicionar.")
+
+        st.divider()
+        if st.button("🔙 Voltar ao Cronograma"):
+            st.session_state['pagina'] = "Cronograma"
+            st.rerun()
