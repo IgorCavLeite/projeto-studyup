@@ -5,6 +5,16 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from frontend.components.auth_ui import desenhar_tela_login
+from frontend.components.cronograma_ui import (
+    exibir_cronograma_semanal,
+    form_adicionar_disciplina_cronograma,
+    form_gerenciar_disciplinas,
+    form_adicionar_compromisso,
+    form_gerenciar_compromissos,
+    exibir_resumo_semanal,
+    sugerir_cronograma_automatico,
+)
+from frontend.components.pomodoro_ui import render_pomodoro_page
 from backend.services.ai_mentor import mentor_ia_resposta
 from backend.services.pomodoro import formatar_tempo
 from backend.services.analytics import (
@@ -261,59 +271,16 @@ else:
 
     # --- PÁGINA: POMODORO ---
     elif st.session_state['pagina'] == "Pomodoro":
-        st.header("⏳ Timer Pomodoro")
         disciplinas = listar_disciplinas()
-        if not disciplinas:
-            st.info("Configure disciplinas e tópicos primeiro.")
-        else:
-            dict_disc = {d[1]: d[0] for d in disciplinas}
-
-            # Pré-selecionar disciplina se vindo do Cronograma
-            disciplina_padrao = st.session_state.get(
-                'disciplina_selecionada', None)
-            auto_start = st.session_state.pop('auto_start_pomodoro', False)
-            indice_padrao = 0
-            if disciplina_padrao and disciplina_padrao in dict_disc:
-                indice_padrao = list(dict_disc.keys()).index(disciplina_padrao)
-
-            esc_disc = st.selectbox("Disciplina:", list(
-                dict_disc.keys()), index=indice_padrao)
-
-            # Limpar a seleção após usar
-            if disciplina_padrao:
-                del st.session_state['disciplina_selecionada']
-
-            topicos = listar_topicos_por_disciplina(dict_disc[esc_disc])
-
-            if topicos:
-                dict_topicos = {t[2]: t[0] for t in topicos}
-                esc_topico = st.selectbox("Tópico:", list(dict_topicos.keys()))
-
-                if auto_start:
-                    tempo = 25 * 60
-                    prog = st.progress(0)
-                    txt = st.empty()
-                    for s in range(tempo, -1, -1):
-                        txt.subheader(f"Restante: {formatar_tempo(s)}")
-                        prog.progress((tempo - s) / tempo)
-                        time.sleep(1)
-                    st.success("Fim do ciclo! Registre seu desempenho abaixo.")
-                elif st.button("Iniciar Foco (25min)"):
-                    tempo = 25 * 60
-                    prog = st.progress(0)
-                    txt = st.empty()
-                    for s in range(tempo, -1, -1):
-                        txt.subheader(f"Restante: {formatar_tempo(s)}")
-                        prog.progress((tempo - s) / tempo)
-                        time.sleep(1)
-                    st.success("Fim do ciclo! Registre seu desempenho abaixo.")
-
-                with st.form("desempenho"):
-                    q = st.number_input("Questões Feitas", min_value=0)
-                    a = st.number_input("Acertos", min_value=0)
-                    if st.form_submit_button("Registrar"):
-                        registrar_desempenho(dict_topicos[esc_topico], q, a)
-                        st.success("Dados salvos!")
+        disciplina_padrao = st.session_state.get('disciplina_selecionada', None)
+        auto_start = st.session_state.pop('auto_start_pomodoro', False)
+        render_pomodoro_page(
+            disciplinas,
+            listar_topicos_por_disciplina,
+            registrar_desempenho,
+            disciplina_padrao=disciplina_padrao,
+            auto_start=auto_start,
+        )
 
     # --- PÁGINA: FLASHCARDS ---
     elif st.session_state['pagina'] == "Flashcards":
@@ -632,6 +599,8 @@ else:
                                 st.markdown(
                                     f"📍 **{disc_nome}** - {DIAS_SEMANA[dia_sem]}{time_info}")
                             with col2:
+                                if st.button("🗑️", key=f"remove_disc_{cron_id}"):
+                                    remover_cronograma(cron_id)
                                     st.success("Disciplina removida!")
                                     st.rerun()
 
