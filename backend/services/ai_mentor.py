@@ -1,12 +1,23 @@
-import google.generativeai as genai
 import os
 from backend.services.analytics import buscar_dados_progresso
 
-# Configurar a API do Gemini
-genai.configure(api_key=os.getenv("AIzaSyDkLFiOqORGiTuIctRORbl3X47GFv0_A-k"))
+try:
+    import google.generativeai as genai
+    _GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    _GENAI_AVAILABLE = False
 
-# Modelo a ser usado
-model = genai.GenerativeModel('models/gemini-flash-lite-latest')
+_API_KEY = os.getenv('GOOGLE_API_KEY') or os.getenv('GENAI_API_KEY')
+if _GENAI_AVAILABLE and _API_KEY:
+    genai.configure(api_key=_API_KEY)
+    model = genai.GenerativeModel('models/gemini-flash-lite-latest')
+else:
+    model = None
+
+
+def _ia_disponivel():
+    return _GENAI_AVAILABLE and model is not None
 
 
 def obter_dados_desempenho():
@@ -33,6 +44,9 @@ def sugerir_topico_estudo():
 
 def criar_flashcards(texto):
     """Cria 3 flashcards a partir de um texto colado."""
+    if not _ia_disponivel():
+        return []
+
     prompt = f"""
     Com base no texto fornecido, crie exatamente 3 flashcards no formato 'Pergunta | Resposta'.
     Cada flashcard deve ser uma linha separada.
@@ -43,9 +57,12 @@ def criar_flashcards(texto):
     Responda apenas com as 3 flashcards, nada mais.
     """
 
-    response = model.generate_content(prompt)
-    flashcards = response.text.strip().split('\n')
-    return flashcards[:3]  # Garantir apenas 3
+    try:
+        response = model.generate_content(prompt)
+        flashcards = response.text.strip().split('\n')
+        return flashcards[:3]  # Garantir apenas 3
+    except Exception:
+        return []
 
 
 def mentor_ia_resposta(mensagem_usuario):
@@ -71,5 +88,19 @@ def mentor_ia_resposta(mensagem_usuario):
     Mensagem do usuário: {mensagem_usuario}
     """
 
-    response = model.generate_content(prompt)
-    return response.text.strip()
+    if not _ia_disponivel():
+        if isinstance(desempenho, str):
+            return "Mentor IA não está configurado. Cadastre seus estudos para usar o app normalmente."
+        materia_menor = min(desempenho, key=desempenho.get)
+        return (f"Mentor IA não está configurado. Enquanto isso, priorize estudar {materia_menor} "
+                f"(desempenho atual: {desempenho[materia_menor]:.1f}%).")
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception:
+        if isinstance(desempenho, str):
+            return "Mentor IA não está disponível no momento. Cadastre seus estudos para usar o app normalmente."
+        materia_menor = min(desempenho, key=desempenho.get)
+        return (f"Mentor IA não respondeu. Enquanto isso, priorize estudar {materia_menor} "
+                f"(desempenho atual: {desempenho[materia_menor]:.1f}%).")

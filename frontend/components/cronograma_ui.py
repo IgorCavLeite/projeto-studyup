@@ -154,7 +154,7 @@ def form_adicionar_disciplina_cronograma(usuario_id=None):
     """Formulário para adicionar uma disciplina ao cronograma."""
     st.subheader("➕ Adicionar Disciplina ao Cronograma")
     
-    disciplinas = listar_disciplinas()
+    disciplinas = listar_disciplinas(usuario_id)
     if not disciplinas:
         st.warning("📚 Cadastre uma disciplina primeiro!")
         return False
@@ -335,7 +335,7 @@ def sugerir_cronograma_automatico(usuario_id=None):
     """Sugere um cronograma automático com base nas disciplinas."""
     st.subheader("🤖 Sugerir Cronograma Automático")
     
-    disciplinas = listar_disciplinas()
+    disciplinas = listar_disciplinas(usuario_id)
     if not disciplinas:
         st.warning("📚 Cadastre disciplinas primeiro!")
         return
@@ -355,13 +355,15 @@ def sugerir_cronograma_automatico(usuario_id=None):
     if st.button("💡 Gerar Sugestão", key="btn_sugestao"):
         if not disciplinas_selecionadas:
             st.warning("Selecione pelo menos uma disciplina!")
-            return
-        
-        disc_ids = [dict_disc[d] for d in disciplinas_selecionadas]
-        sugestoes = obter_sugestoes_cronograma(disc_ids, horas_por_dia)
-        
+            st.session_state.pop('sugestoes_cronograma', None)
+        else:
+            disc_ids = [dict_disc[d] for d in disciplinas_selecionadas]
+            st.session_state['sugestoes_cronograma'] = obter_sugestoes_cronograma(disc_ids, horas_por_dia)
+
+    sugestoes = st.session_state.get('sugestoes_cronograma', [])
+    if sugestoes:
         st.success("✅ Sugestão gerada!")
-        
+
         if st.button("👍 Aceitar Sugestão", key="btn_aceitar_sugestao"):
             for sugestao in sugestoes:
                 sucesso, _, _ = adicionar_disciplina_cronograma(
@@ -372,18 +374,14 @@ def sugerir_cronograma_automatico(usuario_id=None):
                     sugestao['cor'],
                     usuario_id
                 )
-            
+            st.session_state.pop('sugestoes_cronograma', None)
             st.success("✅ Cronograma automático criado!")
             st.rerun()
-        
+
         # Mostrar preview
         st.write("**Preview da sugestão:**")
         for sugestao in sugestoes:
             dia_nome = DIAS_SEMANA[sugestao['dia_semana']]
             # Encontrar nome da disciplina
-            for d in disciplinas:
-                if d[0] == sugestao['disciplina_id']:
-                    nome_disc = d[1]
-                    break
-            
+            nome_disc = next((d[1] for d in disciplinas if d[0] == sugestao['disciplina_id']), None)
             st.info(f"📍 {nome_disc} - {dia_nome} às {sugestao['horario']} ({sugestao['duracao']}min)")

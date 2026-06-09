@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "studyup.db")
 
+def _has_column(cursor, table_name, column_name):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return any(row[1] == column_name for row in cursor.fetchall())
+
 def init_db():
     """Inicializa o banco de dados e cria todas as tabelas necessárias."""
     conn = sqlite3.connect(DB_PATH)
@@ -17,7 +21,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            senha TEXT NOT NULL
+            email TEXT UNIQUE NOT NULL,
+            senha TEXT NOT NULL,
+            pergunta_seguranca TEXT,
+            resposta_seguranca TEXT,
+            reset_token TEXT,
+            reset_token_expiry TEXT
         )
     ''')
 
@@ -25,7 +34,9 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS disciplinas (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            nome TEXT NOT NULL UNIQUE
+            nome TEXT NOT NULL UNIQUE,
+            usuario_id INTEGER,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
         )
     ''')
 
@@ -36,7 +47,9 @@ def init_db():
             disciplina_id INTEGER, 
             nome TEXT NOT NULL, 
             concluido BOOLEAN DEFAULT 0,
-            FOREIGN KEY (disciplina_id) REFERENCES disciplinas (id)
+            usuario_id INTEGER,
+            FOREIGN KEY (disciplina_id) REFERENCES disciplinas (id),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
         )
     ''')
 
@@ -101,6 +114,43 @@ def init_db():
         )
     ''')
 
+    # Ajustar tabelas antigas para suportar usuário e respostas de recuperação
+    if _has_column(cursor, 'usuarios', 'email') is False:
+        try:
+            cursor.execute('ALTER TABLE usuarios ADD COLUMN email TEXT')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'usuarios', 'pergunta_seguranca') is False:
+        try:
+            cursor.execute('ALTER TABLE usuarios ADD COLUMN pergunta_seguranca TEXT')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'usuarios', 'resposta_seguranca') is False:
+        try:
+            cursor.execute('ALTER TABLE usuarios ADD COLUMN resposta_seguranca TEXT')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'usuarios', 'reset_token') is False:
+        try:
+            cursor.execute('ALTER TABLE usuarios ADD COLUMN reset_token TEXT')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'usuarios', 'reset_token_expiry') is False:
+        try:
+            cursor.execute('ALTER TABLE usuarios ADD COLUMN reset_token_expiry TEXT')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'disciplinas', 'usuario_id') is False:
+        try:
+            cursor.execute('ALTER TABLE disciplinas ADD COLUMN usuario_id INTEGER')
+        except sqlite3.OperationalError:
+            pass
+    if _has_column(cursor, 'topicos', 'usuario_id') is False:
+        try:
+            cursor.execute('ALTER TABLE topicos ADD COLUMN usuario_id INTEGER')
+        except sqlite3.OperationalError:
+            pass
+
     # Alterar tabela cronograma para adicionar novas colunas se não existirem
     try:
         cursor.execute('ALTER TABLE cronograma ADD COLUMN start_time TEXT')
@@ -120,47 +170,68 @@ def init_db():
 
 # --- FUNÇÕES DE USUÁRIO ---
 
-def validar_login(username, senha_hash):
+def validar_login(username_or_email, senha_hash):
     """Verifica se as credenciais existem no banco."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM usuarios WHERE username = ? AND senha = ?', (username, senha_hash))
+    cursor.execute(
+        'SELECT * FROM usuarios WHERE (username = ? OR email = ?) AND senha = ?',
+        (username_or_email, username_or_email, senha_hash),
+    )
     user = cursor.fetchone()
     conn.close()
     return user
 
 # --- FUNÇÕES DE DISCIPLINAS E TÓPICOS ---
 
-def adicionar_disciplina(nome):
+def adicionar_disciplina(nome, usuario_id=None):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO disciplinas (nome) VALUES (?)', (nome,))
+        cursor.execute(
+            'INSERT INTO disciplinas (nome, usuario_id) VALUES (?, ?)',
+            (nome, usuario_id),
+        )
         conn.commit()
         conn.close()
         return True
     except sqlite3.IntegrityError:
         return False
 
-def listar_disciplinas():
+def listar_disciplinas(usuario_id=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM disciplinas')
+    if usuario_id is None:
+        cursor.execute('SELECT * FROM disciplinas')
+    else:
+        cursor.execute(
+            'SELECT * FROM disciplinas WHERE usuario_id IS NULL OR usuario_id = ?',
+            (usuario_id,),
+        )
     dados = cursor.fetchall()
     conn.close()
     return dados
 
-def adicionar_topico(disciplina_id, nome_topico):
+def adicionar_topico(disciplina_id, nome_topico, usuario_id=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO topicos (disciplina_id, nome) VALUES (?, ?)', (disciplina_id, nome_topico))
+    cursor.execute(
+        'INSERT INTO topicos (disciplina_id, nome, usuario_id) VALUES (?, ?, ?)',
+        (disciplina_id, nome_topico, usuario_id),
+    )
     conn.commit()
     conn.close()
 
-def listar_topicos_por_disciplina(disciplina_id):
+def listar_topicos_por_disciplina(disciplina_id, usuario_id=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    if usuario_id is None:
+        cursor.execute('SELECT * FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    else:
+        cursor.execute(
+            'SELECT * FROM topicos WHERE disciplina_id = ? AND (usuario_id IS NULL OR usuario_id = ?)',
+            (disciplina_id, usuario_id),
+        )
     dados = cursor.fetchall()
     conn.close()
     return dados
@@ -175,35 +246,59 @@ def atualizar_status_topico(topico_id, status: bool):
     conn.close()
 
 
-def calcular_progresso_disciplina(disciplina_id):
+def calcular_progresso_disciplina(disciplina_id, usuario_id=None):
     """Retorna a porcentagem de tópicos concluídos em uma disciplina."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    if usuario_id is None:
+        cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ?', (disciplina_id,))
+    else:
+        cursor.execute(
+            'SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND (usuario_id IS NULL OR usuario_id = ?)',
+            (disciplina_id, usuario_id),
+        )
     total = cursor.fetchone()[0] or 0
 
     if total == 0:
         conn.close()
         return 0
 
-    cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND concluido = 1', (disciplina_id,))
+    if usuario_id is None:
+        cursor.execute('SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND concluido = 1', (disciplina_id,))
+    else:
+        cursor.execute(
+            'SELECT COUNT(*) FROM topicos WHERE disciplina_id = ? AND concluido = 1 AND (usuario_id IS NULL OR usuario_id = ?)',
+            (disciplina_id, usuario_id),
+        )
     concluido = cursor.fetchone()[0] or 0
     conn.close()
     return round((concluido / total) * 100, 1)
 
 
-def calcular_progresso_geral():
-    """Retorna a porcentagem geral de tópicos concluídos em todo o sistema."""
+def calcular_progresso_geral(usuario_id=None):
+    """Retorna a porcentagem geral de tópicos concluídos para um usuário."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM topicos')
+    if usuario_id is None:
+        cursor.execute('SELECT COUNT(*) FROM topicos')
+    else:
+        cursor.execute(
+            'SELECT COUNT(*) FROM topicos WHERE usuario_id IS NULL OR usuario_id = ?',
+            (usuario_id,),
+        )
     total = cursor.fetchone()[0] or 0
 
     if total == 0:
         conn.close()
         return 0
 
-    cursor.execute('SELECT COUNT(*) FROM topicos WHERE concluido = 1')
+    if usuario_id is None:
+        cursor.execute('SELECT COUNT(*) FROM topicos WHERE concluido = 1')
+    else:
+        cursor.execute(
+            'SELECT COUNT(*) FROM topicos WHERE concluido = 1 AND (usuario_id IS NULL OR usuario_id = ?)',
+            (usuario_id,),
+        )
     concluido = cursor.fetchone()[0] or 0
     conn.close()
     return round((concluido / total) * 100, 1)

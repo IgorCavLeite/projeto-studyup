@@ -117,6 +117,8 @@ else:
 
     if 'usuario' not in st.session_state:
         st.session_state['usuario'] = "Estudante"
+    if 'usuario_id' not in st.session_state:
+        st.session_state['usuario_id'] = None
 
     st.sidebar.markdown("### 👤 Perfil")
     st.sidebar.markdown(
@@ -173,6 +175,8 @@ else:
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair", key="nav_logout"):
         st.session_state['logado'] = False
+        st.session_state.pop('usuario', None)
+        st.session_state.pop('usuario_id', None)
         st.rerun()
 
     st.sidebar.markdown("### v1.0.0")
@@ -181,7 +185,7 @@ else:
     if st.session_state['pagina'] == "Dashboard":
         st.header("📊 Painel de Desempenho")
 
-        progresso_total = calcular_progresso_geral()
+        progresso_total = calcular_progresso_geral(st.session_state.get('usuario_id'))
         st.metric("Progresso total do edital", f"{progresso_total}%")
 
         df_progresso = buscar_dados_progresso()
@@ -219,7 +223,7 @@ else:
         nova_disc = st.text_input(
             "Nome da Disciplina (Ex: Direito Constitucional):")
         if st.button("Salvar"):
-            if nova_disc and adicionar_disciplina(nova_disc):
+            if nova_disc and adicionar_disciplina(nova_disc, st.session_state.get('usuario_id')):
                 st.success("Disciplina cadastrada!")
             else:
                 st.error("Erro ao cadastrar ou já existente.")
@@ -227,7 +231,7 @@ else:
     # --- PÁGINA: CADASTRAR TÓPICO ---
     elif st.session_state['pagina'] == "Cadastrar Tópico":
         st.header("📝 Cadastrar Conteúdo")
-        disciplinas = listar_disciplinas()
+        disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
         if not disciplinas:
             st.warning("Cadastre uma disciplina primeiro!")
         else:
@@ -236,13 +240,13 @@ else:
                 "Selecione a Disciplina:", list(dict_disc.keys()))
             nome_topico = st.text_input("Nome do Tópico (Ex: Artigo 5º):")
             if st.button("Salvar Tópico"):
-                adicionar_topico(dict_disc[escolha], nome_topico)
+                adicionar_topico(dict_disc[escolha], nome_topico, st.session_state.get('usuario_id'))
                 st.success("Tópico adicionado!")
 
     # --- PÁGINA: MEUS ESTUDOS ---
     elif st.session_state['pagina'] == "Meus Estudos":
         st.header("📚 Meus Estudos")
-        disciplinas = listar_disciplinas()
+        disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
         if not disciplinas:
             st.warning("Cadastre uma disciplina primeiro!")
         else:
@@ -251,11 +255,11 @@ else:
                 "Selecione a Disciplina:", list(dict_disc.keys()))
             disciplina_id = dict_disc[escolha]
 
-            progresso = calcular_progresso_disciplina(disciplina_id)
+            progresso = calcular_progresso_disciplina(disciplina_id, st.session_state.get('usuario_id'))
             st.markdown(f"**Progresso em {escolha}:** {progresso}%")
             st.progress(progresso / 100)
 
-            topicos = listar_topicos_por_disciplina(disciplina_id)
+            topicos = listar_topicos_por_disciplina(disciplina_id, st.session_state.get('usuario_id'))
             if not topicos:
                 st.info(
                     "Cadastre tópicos para esta disciplina para acompanhar o progresso.")
@@ -271,12 +275,12 @@ else:
 
     # --- PÁGINA: POMODORO ---
     elif st.session_state['pagina'] == "Pomodoro":
-        disciplinas = listar_disciplinas()
+        disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
         disciplina_padrao = st.session_state.get('disciplina_selecionada', None)
         auto_start = st.session_state.pop('auto_start_pomodoro', False)
         render_pomodoro_page(
             disciplinas,
-            listar_topicos_por_disciplina,
+            lambda disciplina_id: listar_topicos_por_disciplina(disciplina_id, st.session_state.get('usuario_id')),
             registrar_desempenho,
             disciplina_padrao=disciplina_padrao,
             auto_start=auto_start,
@@ -289,14 +293,14 @@ else:
 
         with aba1:
             st.write("Crie novos cards para revisão rápida.")
-            disciplinas = listar_disciplinas()
+            disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
             if not disciplinas:
                 st.warning(
                     "Cadastre uma disciplina primeiro para poder criar flashcards.")
             else:
                 dict_disc = {d[1]: d[0] for d in disciplinas}
                 esc_disc = st.selectbox("Disciplina:", list(dict_disc.keys()))
-                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc])
+                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc], st.session_state.get('usuario_id'))
 
                 if not topicos:
                     st.info(
@@ -319,7 +323,7 @@ else:
 
         with aba2:
             st.write("Revise seus conceitos salvos.")
-            disciplinas = listar_disciplinas()
+            disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
             if not disciplinas:
                 st.warning(
                     "Cadastre uma disciplina primeiro para acessar seus flashcards.")
@@ -327,7 +331,7 @@ else:
                 dict_disc = {d[1]: d[0] for d in disciplinas}
                 esc_disc = st.selectbox("Disciplina:", list(
                     dict_disc.keys()), key="flash_disc")
-                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc])
+                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc], st.session_state.get('usuario_id'))
 
                 if not topicos:
                     st.info(
@@ -409,7 +413,8 @@ else:
         st.divider()
 
         # --- VERIFICAR SE HÁ CRONOGRAMA ---
-        cronograma = buscar_cronograma_usuario()
+        usuario_id = st.session_state.get('usuario_id')
+        cronograma = buscar_cronograma_usuario(usuario_id)
 
         if not cronograma:
             st.markdown(
@@ -458,7 +463,7 @@ else:
                 # item: (id, disciplina_id, disciplina_nome, dia_semana, start_time, duration, color)
                 dia = int(item[3]) if item[3] is not None else 0
                 cronograma_por_dia[dia].append(item)
-            compromissos = buscar_compromissos_extras_usuario()
+            compromissos = buscar_compromissos_extras_usuario(usuario_id)
             for item in compromissos:
                 # item: (id, nome, dia_semana, start_time, duration, color)
                 dia = int(item[2]) if item[2] is not None else 0
@@ -561,7 +566,7 @@ else:
 
                 with tab1:
                     st.write("Escolha uma disciplina, dia, horário e duração:")
-                    disciplinas = listar_disciplinas()
+                    disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
                     if not disciplinas:
                         st.warning("Cadastre uma disciplina primeiro!")
                     else:
@@ -651,7 +656,7 @@ else:
 
         st.write("Adicione suas disciplinas ao cronograma semanal.")
 
-        disciplinas = listar_disciplinas()
+        disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
         if not disciplinas:
             st.warning("Cadastre uma disciplina primeiro!")
             if st.button("📚 Ir para Disciplinas"):

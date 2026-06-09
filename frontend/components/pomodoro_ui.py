@@ -156,6 +156,18 @@ def render_pomodoro_page(
     duracao_selecionada = outros_valores.get(modo, DEFAULT_POMODORO)
     _render_pomodoro_banner(modo, duracao_selecionada)
 
+    if auto_start and not st.session_state.get("pomodoro_auto_start_executed", False):
+        st.session_state["pomodoro_auto_start_executed"] = True
+        st.session_state["pomodoro_cycles"] = _executar_sequencia(
+            "Pomodoro",
+            tempo_foco,
+            pausa_curta,
+            pausa_longa,
+            st.session_state["pomodoro_cycles"],
+        )
+        st.session_state["pomodoro_mode"] = "Pomodoro"
+        st.experimental_rerun()
+
     iniciar_chave = f"iniciar_{modo.replace(' ', '_').lower()}"
     if st.button("▶️ Iniciar Ciclo", key=iniciar_chave):
         st.session_state["pomodoro_cycles"] = _executar_sequencia(

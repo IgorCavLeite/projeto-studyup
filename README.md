@@ -15,7 +15,22 @@ O **StudyUp** é uma ferramenta desenvolvida para auxiliar estudantes na organiz
 - **Lógica de Revisão:** Sugestão automática de revisão (24h ou 7 dias) conforme o desempenho.
 
 ## 💻 Como rodar
-1. Instale as dependências: `pip install -r requirements.txt`
-2. Inicie o app: `python -m streamlit run frontend/app.py`
+1. Instale as dependências e versões travadas:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Inicie o app:
+   ```bash
+   python -m streamlit run frontend/app.py
+   ```
+3. Abra o navegador em `http://localhost:8501`
+
+## 🔐 Variáveis de ambiente
+- `GOOGLE_API_KEY` ou `GENAI_API_KEY`: necessária apenas se quiser usar o Mentor IA.
+
+## ✅ Observações
+- O login está autenticado pelo banco SQLite.
+- Cada usuário tem seu próprio cronograma semanal.
+- Disciplinas e tópicos são compartilhados globalmente no momento.
 
 ---
