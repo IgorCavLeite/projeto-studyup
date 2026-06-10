@@ -41,10 +41,10 @@ def desenhar_tela_login():
         st.divider()
         st.subheader("Redefinir senha com token")
         try:
-            token_param = st.experimental_get_query_params().get("reset_token", [""])[0]
+            token_param = st.query_params.get("reset_token", "")
         except Exception:
             # Compatibilidade com versões do Streamlit que não expõem
-            # `experimental_get_query_params` — apenas não pré-preenche o token.
+            # `st.query_params` — apenas não pré-preenche o token.
             token_param = ""
         with st.form("form_redefinir_token"):
             token_recuperacao = st.text_input(

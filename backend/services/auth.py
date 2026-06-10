@@ -9,13 +9,63 @@ from email.message import EmailMessage
 
 # Importamos o módulo de connection para ler DB_PATH dinamicamente
 from backend.database import connection
+from backend.database.connection import abrir_conexao
+
+def gerar_hash_pbkdf2(senha, salt=None, iterations=100000):
+    """
+    Gera o hash PBKDF2 para uma senha.
+    Formato: pbkdf2_sha256$iterations$salt$hash
+    """
+    if salt is None:
+        salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac(
+        'sha256',
+        senha.encode('utf-8'),
+        salt.encode('utf-8'),
+        iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${dk.hex()}"
+
+
+def verificar_hash(senha, stored_hash):
+    """
+    Verifica se a senha coincide com o hash armazenado.
+    Suporta formato PBKDF2 e SHA256 legado.
+    Retorna (valido, precisa_migracao).
+    """
+    if not stored_hash:
+        return False, False
+        
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        parts = stored_hash.split("$")
+        if len(parts) != 4:
+            return False, False
+        _, iter_str, salt, stored_dk = parts
+        try:
+            iterations = int(iter_str)
+        except ValueError:
+            return False, False
+        
+        computed = hashlib.pbkdf2_hmac(
+            'sha256',
+            senha.encode('utf-8'),
+            salt.encode('utf-8'),
+            iterations
+        )
+        return secrets.compare_digest(computed.hex(), stored_dk), False
+    else:
+        # Hashing legado (SHA256 simples)
+        computed = hashlib.sha256(senha.encode()).hexdigest()
+        return secrets.compare_digest(computed, stored_hash), True
+
 
 def gerar_hash(senha):
     """
     Transforma a senha em um resumo criptográfico (Hash).
-    Isso é padrão de segurança para evitar salvar senhas em texto puro.
+    Agora usa o padrão moderno PBKDF2.
     """
-    return hashlib.sha256(senha.encode()).hexdigest()
+    return gerar_hash_pbkdf2(senha)
+
 
 
 def _montar_link_redefinicao(token):
@@ -70,19 +120,15 @@ def cadastrar_usuario(username, senha, email, resposta_seguranca=None):
         return False, "Usuário, senha e e-mail são obrigatórios!"
 
     try:
-        conn = sqlite3.connect(connection.DB_PATH)
-        cursor = conn.cursor()
-
         senha_criptografada = gerar_hash(senha)
         resposta_criptografada = gerar_hash(resposta_seguranca) if resposta_seguranca else None
 
-        cursor.execute(
-            'INSERT INTO usuarios (username, email, senha, resposta_seguranca) VALUES (?, ?, ?, ?)',
-            (username, email, senha_criptografada, resposta_criptografada),
-        )
-
-        conn.commit()
-        conn.close()
+        with abrir_conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO usuarios (username, email, senha, resposta_seguranca) VALUES (?, ?, ?, ?)',
+                (username, email, senha_criptografada, resposta_criptografada),
+            )
         return True, "Usuário cadastrado com sucesso! Agora você pode fazer login."
 
     except sqlite3.IntegrityError:
@@ -93,20 +139,35 @@ def cadastrar_usuario(username, senha, email, resposta_seguranca=None):
 def autenticar_usuario(username_or_email, senha):
     """
     Lógica para verificar se o usuário e senha estão corretos.
+    Caso a senha seja válida e use hash antigo (SHA-256 simples),
+    ela é automaticamente migrada para o formato moderno PBKDF2.
     """
     if not username_or_email or not senha:
         return False, "Preencha todos os campos!", None
     try:
-        senha_hash = gerar_hash(senha)
-        user = connection.validar_login(username_or_email, senha_hash)
-
-        if user:
-            return True, "Login realizado com sucesso!", user[0]
+        user = connection.buscar_usuario_por_username_ou_email(username_or_email)
+        if not user:
+            return False, "Usuário ou senha incorretos.", None
+            
+        usuario_id = user[0]
+        stored_hash = user[3]
+        
+        valido, precisa_migracao = verificar_hash(senha, stored_hash)
+        
+        if valido:
+            if precisa_migracao:
+                # Migrar para PBKDF2
+                novo_hash = gerar_hash_pbkdf2(senha)
+                with abrir_conexao() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE usuarios SET senha = ? WHERE id = ?", (novo_hash, usuario_id))
+            return True, "Login realizado com sucesso!", usuario_id
         else:
             return False, "Usuário ou senha incorretos.", None
 
     except Exception as e:
         return False, f"Erro na autenticação: {str(e)}", None
+
 
 
 def gerar_token_redefinicao():
@@ -115,27 +176,24 @@ def gerar_token_redefinicao():
 
 
 def _salvar_token_redefinicao(usuario_id, token, expiry):
-    conn = sqlite3.connect(connection.DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE usuarios SET reset_token = ?, reset_token_expiry = ? WHERE id = ?',
-        (token, expiry.isoformat(), usuario_id),
-    )
-    conn.commit()
-    conn.close()
+    with abrir_conexao() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE usuarios SET reset_token = ?, reset_token_expiry = ? WHERE id = ?',
+            (token, expiry.isoformat(), usuario_id),
+        )
 
 
 def solicitar_link_redefinicao(email):
     if not email:
         return False, "Informe o e-mail para receber o link de recuperação."
 
-    conn = sqlite3.connect(connection.DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT id FROM usuarios WHERE email = ?', (email,))
-    usuario = cursor.fetchone()
+    with abrir_conexao() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM usuarios WHERE email = ?', (email,))
+        usuario = cursor.fetchone()
 
     if not usuario:
-        conn.close()
         return False, "E-mail não cadastrado."
 
     usuario_id = usuario[0]
@@ -157,18 +215,18 @@ def solicitar_link_redefinicao(email):
     return True, "Link de recuperação enviado por e-mail. Verifique sua caixa de entrada."
 
 
+
 def validar_token_redefinicao(token):
     if not token:
         return None
 
-    conn = sqlite3.connect(connection.DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT id, reset_token_expiry FROM usuarios WHERE reset_token = ?',
-        (token,),
-    )
-    usuario = cursor.fetchone()
-    conn.close()
+    with abrir_conexao() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id, reset_token_expiry FROM usuarios WHERE reset_token = ?',
+            (token,),
+        )
+        usuario = cursor.fetchone()
 
     if not usuario:
         return None
@@ -189,14 +247,12 @@ def validar_token_redefinicao(token):
 
 
 def limpar_token_redefinicao(usuario_id):
-    conn = sqlite3.connect(connection.DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE usuarios SET reset_token = NULL, reset_token_expiry = NULL WHERE id = ?',
-        (usuario_id,),
-    )
-    conn.commit()
-    conn.close()
+    with abrir_conexao() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE usuarios SET reset_token = NULL, reset_token_expiry = NULL WHERE id = ?',
+            (usuario_id,),
+        )
 
 
 def redefinir_senha_por_token(token, nova_senha):
@@ -208,15 +264,13 @@ def redefinir_senha_por_token(token, nova_senha):
         return False, "Token inválido ou expirado."
 
     try:
-        conn = sqlite3.connect(connection.DB_PATH)
-        cursor = conn.cursor()
         nova_senha_hash = gerar_hash(nova_senha)
-        cursor.execute(
-            'UPDATE usuarios SET senha = ? WHERE id = ?',
-            (nova_senha_hash, usuario_id),
-        )
-        conn.commit()
-        conn.close()
+        with abrir_conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE usuarios SET senha = ? WHERE id = ?',
+                (nova_senha_hash, usuario_id),
+            )
         limpar_token_redefinicao(usuario_id)
         return True, "Senha redefinida com sucesso. Você pode fazer login com a nova senha."
     except Exception as e:
@@ -228,34 +282,44 @@ def redefinir_senha(username, resposta_seguranca, nova_senha):
         return False, "Preencha todos os campos de recuperação."
 
     try:
-        conn = sqlite3.connect(connection.DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT id, resposta_seguranca FROM usuarios WHERE username = ?',
-            (username,),
-        )
-        usuario = cursor.fetchone()
+        with abrir_conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT id, resposta_seguranca FROM usuarios WHERE username = ?',
+                (username,),
+            )
+            usuario = cursor.fetchone()
 
         if not usuario:
-            conn.close()
             return False, "Usuário não encontrado."
 
         usuario_id, resposta_hash = usuario
         if resposta_hash is None:
-            conn.close()
             return False, "Este usuário não possui palavra-chave de recuperação cadastrada."
 
-        if resposta_hash != gerar_hash(resposta_seguranca):
-            conn.close()
+        valido, precisa_migracao = verificar_hash(resposta_seguranca, resposta_hash)
+        if not valido:
             return False, "Resposta de recuperação incorreta."
 
         nova_senha_hash = gerar_hash(nova_senha)
-        cursor.execute(
-            'UPDATE usuarios SET senha = ? WHERE id = ?',
-            (nova_senha_hash, usuario_id),
-        )
-        conn.commit()
-        conn.close()
+        
+        with abrir_conexao() as conn:
+            cursor = conn.cursor()
+            if precisa_migracao:
+                # Migrar resposta de segurança para PBKDF2 também
+                nova_resposta_hash = gerar_hash_pbkdf2(resposta_seguranca)
+                cursor.execute(
+                    'UPDATE usuarios SET senha = ?, resposta_seguranca = ? WHERE id = ?',
+                    (nova_senha_hash, nova_resposta_hash, usuario_id),
+                )
+            else:
+                cursor.execute(
+                    'UPDATE usuarios SET senha = ? WHERE id = ?',
+                    (nova_senha_hash, usuario_id),
+                )
+            
         return True, "Senha redefinida com sucesso. Você já pode fazer login com a nova senha."
     except Exception as e:
         return False, f"Erro ao redefinir senha: {str(e)}"
+
+

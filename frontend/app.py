@@ -33,6 +33,8 @@ from backend.database.connection import (
     registrar_desempenho,
     adicionar_flashcard,
     listar_flashcards_por_topico,
+    listar_flashcards_revisao,
+    salvar_progresso_flashcard,
     checar_conexao,
     salvar_cronograma,
     buscar_cronograma_usuario,
@@ -265,7 +267,7 @@ else:
                     "Cadastre tópicos para esta disciplina para acompanhar o progresso.")
             else:
                 for tp in topicos:
-                    tp_id, _, tp_nome, tp_concluido = tp
+                    tp_id, _, tp_nome, tp_concluido = tp[:4]
                     label = f"✅ {tp_nome}" if tp_concluido else tp_nome
                     st.checkbox(label,
                                 value=bool(tp_concluido),
@@ -323,7 +325,8 @@ else:
 
         with aba2:
             st.write("Revise seus conceitos salvos.")
-            disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
+            usuario_id = st.session_state.get('usuario_id')
+            disciplinas = listar_disciplinas(usuario_id)
             if not disciplinas:
                 st.warning(
                     "Cadastre uma disciplina primeiro para acessar seus flashcards.")
@@ -331,7 +334,7 @@ else:
                 dict_disc = {d[1]: d[0] for d in disciplinas}
                 esc_disc = st.selectbox("Disciplina:", list(
                     dict_disc.keys()), key="flash_disc")
-                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc], st.session_state.get('usuario_id'))
+                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc], usuario_id)
 
                 if not topicos:
                     st.info(
@@ -340,17 +343,87 @@ else:
                     dict_topicos = {t[2]: t[0] for t in topicos}
                     esc_topico = st.selectbox("Tópico:", list(
                         dict_topicos.keys()), key="flash_top")
-                    flashcards = listar_flashcards_por_topico(
-                        dict_topicos[esc_topico])
+                    
+                    # Resetar estado do SRS caso mude disciplina/tópico
+                    chave_atual = (esc_disc, esc_topico)
+                    if st.session_state.get('srs_key') != chave_atual:
+                        st.session_state['srs_key'] = chave_atual
+                        st.session_state['srs_card_idx'] = 0
+                        st.session_state['srs_show_answer'] = False
 
-                    if not flashcards:
-                        st.info(
-                            "Nenhum flashcard criado ainda. Vá para a aba 'Criar' para adicionar.")
+                    # Seleção de modo de estudo
+                    modo_estudo = st.radio(
+                        "Modo de Estudo:",
+                        ["Praticar (Repetição Espaçada)", "Navegar por Todos"],
+                        key="modo_estudo_flashcard"
+                    )
+
+                    st.write("---")
+
+                    if modo_estudo == "Praticar (Repetição Espaçada)":
+                        # Listar flashcards vencidos
+                        flashcards_revisao = listar_flashcards_revisao(dict_topicos[esc_topico], usuario_id)
+                        
+                        if not flashcards_revisao:
+                            st.success("🎉 Todos os flashcards deste tópico estão em dia!")
+                        else:
+                            idx = st.session_state.get('srs_card_idx', 0)
+                            
+                            if idx >= len(flashcards_revisao):
+                                st.success("🎉 Você concluiu a sessão de estudos para este tópico!")
+                                if st.button("🔄 Estudar Novamente"):
+                                    st.session_state['srs_card_idx'] = 0
+                                    st.session_state['srs_show_answer'] = False
+                                    st.rerun()
+                            else:
+                                fc = flashcards_revisao[idx]
+                                # fc: (id, topico_id, pergunta, resposta, caixa, proxima_revisao)
+                                
+                                st.markdown(f"**Cartão {idx + 1} de {len(flashcards_revisao)}** (Caixa: {fc[4] or 1})")
+                                
+                                # Render da pergunta
+                                st.markdown(f"""
+                                <div style='background: #f0f2f6; border-left: 5px solid #2196F3; padding: 15px; border-radius: 5px; margin-bottom: 15px;'>
+                                    <h5 style='margin: 0; color: #333;'>P: {fc[2]}</h5>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                if not st.session_state.get('srs_show_answer', False):
+                                    if st.button("👁️ Mostrar Resposta"):
+                                        st.session_state['srs_show_answer'] = True
+                                        st.rerun()
+                                else:
+                                    # Render da resposta
+                                    st.markdown(f"""
+                                    <div style='background: #e8f5e9; border-left: 5px solid #4CAF50; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
+                                        <h5 style='margin: 0; color: #2e7d32;'>R: {fc[3]}</h5>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if st.button("🔴 Errei / Difícil", key=f"btn_err_{fc[0]}", use_container_width=True):
+                                            salvar_progresso_flashcard(usuario_id, fc[0], False)
+                                            st.session_state['srs_card_idx'] = idx + 1
+                                            st.session_state['srs_show_answer'] = False
+                                            st.rerun()
+                                    with col2:
+                                        if st.button("🟢 Acertei / Fácil", key=f"btn_acert_{fc[0]}", use_container_width=True):
+                                            salvar_progresso_flashcard(usuario_id, fc[0], True)
+                                            st.session_state['srs_card_idx'] = idx + 1
+                                            st.session_state['srs_show_answer'] = False
+                                            st.rerun()
+                                            
                     else:
-                        for fc in flashcards:
-                            # fc: (id, topico_id, pergunta, resposta)
-                            with st.expander(fc[2]):
-                                st.write(f"**Resposta:** {fc[3]}")
+                        flashcards = listar_flashcards_por_topico(dict_topicos[esc_topico])
+                        if not flashcards:
+                            st.info(
+                                "Nenhum flashcard criado ainda. Vá para a aba 'Criar' para adicionar.")
+                        else:
+                            for fc in flashcards:
+                                # fc: (id, topico_id, pergunta, resposta)
+                                with st.expander(fc[2]):
+                                    st.write(f"**Resposta:** {fc[3]}")
 
     # --- PÁGINA: MENTOR IA ---
     elif st.session_state['pagina'] == "Mentor IA":
@@ -364,11 +437,50 @@ else:
             st.session_state['chat_history'] = []
 
         # Exibir histórico
-        for msg in st.session_state['chat_history']:
+        for idx, msg in enumerate(st.session_state['chat_history']):
             if msg['role'] == 'user':
                 st.markdown(f"**Você:** {msg['content']}")
             else:
                 st.markdown(f"**Mentor IA:** {msg['content']}")
+                
+                # Se tiver flashcards sugeridos
+                flashcards = msg.get('flashcards', [])
+                if flashcards:
+                    st.write("")
+                    salvos = msg.get('salvos', False)
+                    if salvos:
+                        st.success("✅ Flashcards salvos com sucesso no seu banco de dados!")
+                    else:
+                        with st.expander("💡 Flashcards Sugeridos - Clique para Salvar", expanded=True):
+                            for i, fc in enumerate(flashcards):
+                                st.markdown(f"**Card {i+1}:**")
+                                st.markdown(f"- **P:** {fc['pergunta']}")
+                                st.markdown(f"- **R:** {fc['resposta']}")
+                            
+                            st.write("---")
+                            usuario_id = st.session_state.get('usuario_id')
+                            disciplinas = listar_disciplinas(usuario_id)
+                            if disciplinas:
+                                dict_disc = {d[1]: d[0] for d in disciplinas}
+                                key_disc = f"disc_sug_{idx}"
+                                esc_disc = st.selectbox("Salvar na Disciplina:", list(dict_disc.keys()), key=key_disc)
+                                
+                                topicos = listar_topicos_por_disciplina(dict_disc[esc_disc], usuario_id)
+                                if topicos:
+                                    dict_topicos = {t[2]: t[0] for t in topicos}
+                                    key_top = f"top_sug_{idx}"
+                                    esc_topico = st.selectbox("Salvar no Tópico:", list(dict_topicos.keys()), key=key_top)
+                                    
+                                    if st.button("💾 Adicionar estes Flashcards", key=f"btn_save_sug_{idx}"):
+                                        for fc in flashcards:
+                                            adicionar_flashcard(dict_topicos[esc_topico], fc['pergunta'], fc['resposta'])
+                                        st.session_state['chat_history'][idx]['salvos'] = True
+                                        st.success("Flashcards adicionados com sucesso!")
+                                        st.rerun()
+                                else:
+                                    st.warning("Cadastre um tópico para esta disciplina para salvar os flashcards.")
+                            else:
+                                st.warning("Cadastre uma disciplina primeiro para salvar os flashcards.")
 
         # Input do usuário
         user_input = st.text_area(
@@ -383,10 +495,23 @@ else:
                 # Gerar resposta da IA
                 resposta = mentor_ia_resposta(user_input)
 
-                # Adicionar resposta ao histórico
-                st.session_state['chat_history'].append(
-                    {'role': 'assistant', 'content': resposta})
+                # Fazer o parse do JSON
+                import json
+                try:
+                    dados_ia = json.loads(resposta)
+                    texto_resposta = dados_ia.get("resposta", "")
+                    flashcards_sugeridos = dados_ia.get("flashcards", [])
+                except Exception:
+                    texto_resposta = resposta
+                    flashcards_sugeridos = []
 
+                # Adicionar resposta ao histórico
+                st.session_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': texto_resposta,
+                    'flashcards': flashcards_sugeridos,
+                    'salvos': False
+                })
                 st.rerun()
             else:
                 st.warning("Digite uma mensagem antes de enviar.")
@@ -403,16 +528,9 @@ else:
         data_formatada = hoje.strftime("%A, %d de %B de %Y").replace("Monday", "Segunda").replace("Tuesday", "Terça").replace(
             "Wednesday", "Quarta").replace("Thursday", "Quinta").replace("Friday", "Sexta").replace("Saturday", "Sábado").replace("Sunday", "Domingo")
 
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.markdown(f"### 📅 Hoje: {data_formatada}")
-
-        with col2, col3:
-            pass
-
+        st.markdown(f"### 📅 Hoje: {data_formatada}")
         st.divider()
 
-        # --- VERIFICAR SE HÁ CRONOGRAMA ---
         usuario_id = st.session_state.get('usuario_id')
         cronograma = buscar_cronograma_usuario(usuario_id)
 
@@ -428,257 +546,118 @@ else:
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
         else:
-            # --- GRID SEMANAL ---
-            st.subheader("📆 Sua Semana de Estudos")
-
-            dia_semana_atual = obter_numero_dia_semana()
-
-            col1, col2 = st.columns([1,3])
-            with col1:
-                view_mode = st.radio("Modo:", ["Semanal", "Diário"], key="view_mode")
-            with col2:
-                if view_mode == "Diário":
-                    dia_foco = st.selectbox("Dia:", DIAS_SEMANA, index=dia_semana_atual, key="dia_foco")
-                    dia_foco_idx = DIAS_MAP.get(dia_foco, dia_semana_atual)
-                else:
-                    dia_foco_idx = None
-
+            exibir_cronograma_semanal(usuario_id)
+            
             st.divider()
-
-            # Metas do dia
-            if view_mode == "Diário" and dia_foco_idx == dia_semana_atual:
-                st.subheader("🎯 Metas de Hoje")
-                objetivo = st.text_area("Objetivo do Dia:", key="objetivo_hoje", height=100)
-                if st.button("💾 Salvar Meta"):
-                    # Save to session or db, for now session
-                    st.session_state['meta_hoje'] = objetivo
-                    st.success("Meta salva!")
-
+            exibir_resumo_semanal(usuario_id)
+            
             st.divider()
-
-            # Agrupar disciplinas e compromissos por dia
-            cronograma_por_dia = {i: [] for i in range(7)}
-            compromissos_por_dia = {i: [] for i in range(7)}
-            for item in cronograma:
-                # item: (id, disciplina_id, disciplina_nome, dia_semana, start_time, duration, color)
-                dia = int(item[3]) if item[3] is not None else 0
-                cronograma_por_dia[dia].append(item)
-            compromissos = buscar_compromissos_extras_usuario(usuario_id)
-            for item in compromissos:
-                # item: (id, nome, dia_semana, start_time, duration, color)
-                dia = int(item[2]) if item[2] is not None else 0
-                compromissos_por_dia[dia].append(item)
-
-            # Calcular progresso diário
-            dia_ref = dia_foco_idx if view_mode == "Diário" else dia_semana_atual
-            disciplinas_ref = cronograma_por_dia[dia_ref]
-            estudadas_ref = sum(1 for item in disciplinas_ref if foi_estudada_hoje(item[1]))
-            total_ref = len(disciplinas_ref)
-
-            if total_ref > 0:
-                progresso_ref = (estudadas_ref / total_ref) * 100
-                dia_nome_ref = DIAS_SEMANA[dia_ref]
-                st.metric(f"📊 Progresso de {dia_nome_ref}",
-                          f"{estudadas_ref}/{total_ref}", f"{int(progresso_ref)}%")
-                st.progress(progresso_ref / 100)
-            else:
-                st.info(f"Nenhuma disciplina agendada para {DIAS_SEMANA[dia_ref] if view_mode == 'Diário' else 'hoje'}.")
-
-            st.divider()
-
-            # Grid
-            if view_mode == "Semanal":
-                colunas = st.columns(7)
-                dias_a_mostrar = range(7)
-            else:
-                colunas = st.columns(1)
-                dias_a_mostrar = [dia_foco_idx]
-
-            for idx, dia_idx in enumerate(dias_a_mostrar):
-                with colunas[idx]:
-                    dia_nome = DIAS_SEMANA[dia_idx]
-                    eh_hoje = dia_idx == dia_semana_atual
-
-                    # Destaque visual para hoje
-                    if eh_hoje:
-                        st.markdown(
-                            f"<div style='display: flex; justify-content: center; align-items: center; padding: 6px 12px; border-radius: 999px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-bottom: 10px;'>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<span style='color: white; font-weight: 700;'>📍 Hoje</span>", unsafe_allow_html=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<h4 style='text-align: center; margin-top: 0; margin-bottom: 4px;'>{dia_nome}</h4>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(
-                            f"<h4 style='text-align: center; margin-top: 0;'>{dia_nome}</h4>", unsafe_allow_html=True)
-
-                    disciplinas_dia = cronograma_por_dia[dia_idx]
-                    compromissos_dia = compromissos_por_dia[dia_idx]
-
-                    all_items = []
-                    for item in disciplinas_dia:
-                        all_items.append(('disciplina', item))
-                    for item in compromissos_dia:
-                        all_items.append(('compromisso', item))
-
-                    # Sort by start_time
-                    all_items.sort(key=lambda x: x[1][4] if x[0] == 'disciplina' else x[1][3] or '00:00')
-
-                    if not all_items:
-                        st.markdown(
-                            f"<p style='text-align: center; color: #999;'>-</p>", unsafe_allow_html=True)
-                    else:
-                        for tipo, item in all_items:
-                            if tipo == 'disciplina':
-                                cronograma_id, disc_id, disc_nome, _, start_time, duration, color = item
-                                estudada = foi_estudada_hoje(disc_id) if eh_hoje else False
-                                simbolo = "✅" if estudada else ("⏳" if eh_hoje else "📌")
-                                nome = disc_nome
-                                bg_color = color or "#E9ECEF"
-                            else:
-                                comp_id, nome, _, start_time, duration, color = item
-                                simbolo = "📅"
-                                bg_color = color or "#FF9800"
-                                estudada = False
-
-                            time_info = f" ({start_time})" if start_time else ""
-                            st.markdown(f"""
-                            <div style='background: {bg_color}; border: 2px solid #6C757D; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 8px;'>
-                                <p style='margin: 0; font-size: 0.75rem; font-weight: bold; color: #333;'>{simbolo} {nome}{time_info}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            # Botão de ação para disciplinas hoje
-                            if tipo == 'disciplina' and eh_hoje and not estudada:
-                                if st.button(f"▶️ Iniciar", key=f"iniciar_{cronograma_id}"):
-                                    st.session_state['pagina'] = "Pomodoro"
-                                    st.session_state['disciplina_selecionada'] = disc_nome
-                                    st.session_state['auto_start_pomodoro'] = True
-                                    st.rerun()
-
-            st.divider()
-
-            # --- SEÇÃO DE CONFIGURAÇÃO DO CRONOGRAMA ---
             st.subheader("⚙️ Gerenciar Cronograma")
-
+            
             with st.expander("🔧 Adicionar ou Remover Disciplinas"):
                 tab1, tab2 = st.tabs(["Adicionar", "Remover"])
-
                 with tab1:
-                    st.write("Escolha uma disciplina, dia, horário e duração:")
-                    disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
-                    if not disciplinas:
-                        st.warning("Cadastre uma disciplina primeiro!")
-                    else:
-                        dict_disc = {d[1]: d[0] for d in disciplinas}
-                        esc_disc = st.selectbox("Disciplina:", list(
-                            dict_disc.keys()), key="crono_disc")
-                        esc_dia = st.selectbox(
-                            "Dia da Semana:", DIAS_SEMANA, key="crono_dia")
-                        time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
-                        esc_time = st.selectbox("Horário de Início:", time_slots, key="crono_time")
-                        esc_duration = st.selectbox("Duração (min):", [30,60,90,120], key="crono_duration")
-                        color_options = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0']
-                        esc_color = st.selectbox("Cor:", color_options, key="crono_color")
-
-                        if st.button("✅ Adicionar ao Cronograma"):
-                            dia_idx = DIAS_MAP.get(esc_dia, 0)
-                            if salvar_cronograma(dict_disc[esc_disc], dia_idx, esc_time, esc_duration, esc_color):
-                                st.success(
-                                    f"✅ {esc_disc} adicionada para {esc_dia} às {esc_time}!")
-                                st.rerun()
-                            else:
-                                st.error("Erro ao adicionar.")
-
+                    form_adicionar_disciplina_cronograma(usuario_id)
                 with tab2:
-                    st.write("Remova disciplinas do seu cronograma:")
-                    if not cronograma:
-                        st.info("Nenhuma disciplina no cronograma.")
-                    else:
-                        # Mostrar cronograma para remover
-                        for item in cronograma:
-                            cron_id, disc_id, disc_nome, dia_sem, start_time, duration, color = item
-                            time_info = f" às {start_time}" if start_time else ""
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.markdown(
-                                    f"📍 **{disc_nome}** - {DIAS_SEMANA[dia_sem]}{time_info}")
-                            with col2:
-                                if st.button("🗑️", key=f"remove_disc_{cron_id}"):
-                                    remover_cronograma(cron_id)
-                                    st.success("Disciplina removida!")
-                                    st.rerun()
-
-            st.divider()
-
-            # --- COMPROMISSOS EXTRAS ---
+                    form_gerenciar_disciplinas(usuario_id)
+            
             with st.expander("📅 Gerenciar Compromissos Extras"):
                 tab1, tab2 = st.tabs(["Adicionar", "Remover"])
-
                 with tab1:
-                    st.write("Adicione compromissos extras (ex: academia, almoço):")
-                    nome_comp = st.text_input("Nome do Compromisso:", key="comp_nome")
-                    esc_dia_comp = st.selectbox("Dia da Semana:", DIAS_SEMANA, key="comp_dia")
-                    time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
-                    esc_time_comp = st.selectbox("Horário de Início:", time_slots, key="comp_time")
-                    esc_duration_comp = st.selectbox("Duração (min):", [30,60,90,120], key="comp_duration")
-                    color_options = ['#FF9800', '#4CAF50', '#2196F3', '#E91E63', '#9C27B0']
-                    esc_color_comp = st.selectbox("Cor:", color_options, key="comp_color")
-
-                    if st.button("✅ Adicionar Compromisso"):
-                        dia_idx = DIAS_MAP.get(esc_dia_comp, 0)
-                        if salvar_compromisso_extra(nome_comp, dia_idx, esc_time_comp, esc_duration_comp, esc_color_comp):
-                            st.success(f"✅ {nome_comp} adicionado!")
-                            st.rerun()
-                        else:
-                            st.error("Erro ao adicionar.")
-
+                    form_adicionar_compromisso(usuario_id)
                 with tab2:
-                    st.write("Remova compromissos extras:")
-                    if not compromissos:
-                        st.info("Nenhum compromisso extra.")
-                    else:
-                        for item in compromissos:
-                            comp_id, nome, dia_sem, start_time, duration, color = item
-                            time_info = f" às {start_time}" if start_time else ""
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.markdown(f"📅 **{nome}** - {DIAS_SEMANA[dia_sem]}{time_info}")
-                            with col2:
-                                if st.button("🗑️", key=f"remove_comp_{comp_id}"):
-                                    remover_compromisso_extra(comp_id)
-                                    st.success("Compromisso removido!")
-                                    st.rerun()
+                    form_gerenciar_compromissos(usuario_id)
+            
+            with st.expander("🤖 Sugestões Automáticas"):
+                sugerir_cronograma_automatico(usuario_id)
 
     # --- PÁGINA: CONFIGURAR CRONOGRAMA ---
     elif st.session_state['pagina'] == "Configurar Cronograma":
         st.header("⚙️ Configurar Cronograma")
-
         st.write("Adicione suas disciplinas ao cronograma semanal.")
+        usuario_id = st.session_state.get('usuario_id')
+        form_adicionar_disciplina_cronograma(usuario_id)
 
-        disciplinas = listar_disciplinas(st.session_state.get('usuario_id'))
-        if not disciplinas:
-            st.warning("Cadastre uma disciplina primeiro!")
-            if st.button("📚 Ir para Disciplinas"):
-                st.session_state['pagina'] = "Cadastrar Disciplina"
+        st.divider()
+        if st.button("🔙 Voltar ao Cronograma"):
+            st.session_state['pagina'] = "Cronograma"
+            st.rerun()
+
+    # --- PÁGINA: PERFIL ---
+    elif st.session_state['pagina'] == "Perfil":
+        from backend.services.auth import gerar_hash
+        st.header("👤 Perfil do Usuário")
+        usuario_id = st.session_state.get('usuario_id')
+        
+        # Obter dados do usuário
+        from backend.database.connection import abrir_conexao
+        with abrir_conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT username, email, pergunta_seguranca FROM usuarios WHERE id = ?", (usuario_id,))
+            user_data = cursor.fetchone()
+        
+        if user_data:
+            username, email, pergunta = user_data
+            st.write(f"**Nome de Usuário:** {username}")
+            st.write(f"**E-mail:** {email or 'Não cadastrado'}")
+            st.write(f"**Pergunta de Segurança:** {pergunta or 'Não cadastrada'}")
+            
+            st.divider()
+            st.subheader("Alterar Configurações de Recuperação")
+            with st.form("form_perfil_update"):
+                novo_email = st.text_input("Alterar E-mail:", value=email or "")
+                nova_pergunta = st.text_input("Pergunta de Segurança:", value=pergunta or "", placeholder="Ex: Nome do seu primeiro mascote?")
+                nova_resposta = st.text_input("Resposta da Pergunta (Deixe em branco para manter a atual):", type="password")
+                
+                if st.form_submit_button("Salvar Alterações"):
+                    if not novo_email:
+                        st.error("O e-mail é obrigatório.")
+                    else:
+                        from backend.database.connection import abrir_conexao
+                        try:
+                            with abrir_conexao() as conn:
+                                cursor = conn.cursor()
+                                if nova_resposta:
+                                    cursor.execute(
+                                        "UPDATE usuarios SET email = ?, pergunta_seguranca = ?, resposta_seguranca = ? WHERE id = ?",
+                                        (novo_email, nova_pergunta, gerar_hash(nova_resposta), usuario_id)
+                                    )
+                                else:
+                                    cursor.execute(
+                                        "UPDATE usuarios SET email = ?, pergunta_seguranca = ? WHERE id = ?",
+                                        (novo_email, nova_pergunta, usuario_id)
+                                    )
+                            st.success("Perfil atualizado com sucesso!")
+                            st.rerun()
+
+                        except sqlite3.IntegrityError:
+                            st.error("Este e-mail já está em uso por outro usuário.")
+                        except Exception as e:
+                            st.error(f"Erro ao salvar: {e}")
+
+    # --- PÁGINA: CONFIGURAÇÕES ---
+    elif st.session_state['pagina'] == "Configurações":
+        st.header("⚙️ Opções do Sistema")
+        
+        st.subheader("Configurações do Pomodoro Padrão")
+        if 'pomodoro_foco' not in st.session_state:
+            st.session_state['pomodoro_foco'] = 20
+        if 'pomodoro_pausa_curta' not in st.session_state:
+            st.session_state['pomodoro_pausa_curta'] = 5
+        if 'pomodoro_pausa_longa' not in st.session_state:
+            st.session_state['pomodoro_pausa_longa'] = 15
+            
+        with st.form("form_config_pomodoro"):
+            foco = st.number_input("Tempo de Foco padrão (min):", min_value=5, max_value=90, value=st.session_state['pomodoro_foco'])
+            pausa_c = st.number_input("Pausa Curta padrão (min):", min_value=1, max_value=30, value=st.session_state['pomodoro_pausa_curta'])
+            pausa_l = st.number_input("Pausa Longa padrão (min):", min_value=5, max_value=60, value=st.session_state['pomodoro_pausa_longa'])
+            
+            if st.form_submit_button("Salvar Preferências"):
+                st.session_state['pomodoro_foco'] = foco
+                st.session_state['pomodoro_pausa_curta'] = pausa_c
+                st.session_state['pomodoro_pausa_longa'] = pausa_l
+                st.success("Configurações do Pomodoro atualizadas!")
                 st.rerun()
-        else:
-            dict_disc = {d[1]: d[0] for d in disciplinas}
-            esc_disc = st.selectbox("Disciplina:", list(dict_disc.keys()), key="setup_disc")
-            esc_dia = st.selectbox("Dia da Semana:", DIAS_SEMANA, key="setup_dia")
-            time_slots = [f"{h:02d}:{m:02d}" for h in range(6,23) for m in [0,30]]
-            esc_time = st.selectbox("Horário de Início:", time_slots, key="setup_time")
-            esc_duration = st.selectbox("Duração (min):", [30,60,90,120], key="setup_duration")
-            color_options = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0']
-            esc_color = st.selectbox("Cor:", color_options, key="setup_color")
-
-            if st.button("✅ Adicionar ao Cronograma"):
-                dia_idx = DIAS_MAP.get(esc_dia, 0)
-                if salvar_cronograma(dict_disc[esc_disc], dia_idx, esc_time, esc_duration, esc_color):
-                    st.success(f"✅ {esc_disc} adicionada para {esc_dia} às {esc_time}!")
-                    st.rerun()
-                else:
-                    st.error("Erro ao adicionar.")
 
         st.divider()
         if st.button("🔙 Voltar ao Cronograma"):

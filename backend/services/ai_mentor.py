@@ -67,6 +67,7 @@ def criar_flashcards(texto):
 
 def mentor_ia_resposta(mensagem_usuario):
     """Gera resposta do Mentor de Estudos Inteligente."""
+    import json
     desempenho = obter_dados_desempenho()
 
     if isinstance(desempenho, str):
@@ -76,31 +77,85 @@ def mentor_ia_resposta(mensagem_usuario):
             [f"{mat}: {pct:.1f}%" for mat, pct in desempenho.items()])
 
     prompt = f"""
-    Atue como um Mentor de Estudos Inteligente para o projeto StudyUp.
+    Você é o Mentor de Estudos Inteligente do aplicativo StudyUp.
     Dados de desempenho do usuário: {dados_str}
     
-    Seu objetivo é:
-    - Sugerir qual tópico estudar hoje priorizando as matérias com menor desempenho.
-    - Se o usuário colar um texto, criar 3 flashcards no formato 'Pergunta | Resposta'.
-    - Manter um tom motivador e conciso.
-    - Responda sempre em Markdown para facilitar a leitura no Streamlit.
+    Sua resposta DEVE ser um objeto JSON contendo exatamente dois campos:
+    1. "resposta": Uma mensagem de texto em Markdown. Nela, você deve:
+       - Responder à mensagem do usuário.
+       - Sugerir qual disciplina estudar hoje com base nos dados de desempenho fornecidos (priorizando menor percentual).
+       - Se for o caso de o usuário colar um texto para estudar ou pedir flashcards explicitamente, explique na resposta que sugeriu alguns flashcards.
+       - Manter um tom motivador e conciso.
+    2. "flashcards": Um array de objetos JSON contendo sugestões de flashcards, ou um array vazio [] se o usuário não pediu e não há necessidade de criá-los. 
+       Se o usuário colou um texto ou pediu flashcards explicitamente (ou você julgar altamente relevante para o tema da conversa), gere exatamente 3 flashcards relevantes.
+       Cada flashcard no array deve ter a estrutura:
+         {{"pergunta": "Pergunta concisa sobre o conteúdo", "resposta": "Resposta direta e objetiva"}}
+    
+    Exemplo de formato de saída esperado:
+    {{
+      "resposta": "Olá! Com base no seu desempenho, recomendo focar em... Aqui estão alguns flashcards para praticar.",
+      "flashcards": [
+        {{"pergunta": "O que é polimorfismo?", "resposta": "Capacidade de um objeto assumir diferentes formas."}},
+        {{"pergunta": "Exemplo de polimorfismo?", "resposta": "Sobrescrita de métodos em subclasses."}},
+        {{"pergunta": "Benefício principal?", "resposta": "Flexibilidade e reutilização de código."}}
+      ]
+    }}
     
     Mensagem do usuário: {mensagem_usuario}
+    
+    Responda APENAS com o objeto JSON estruturado.
     """
 
     if not _ia_disponivel():
+        mock_flashcards = []
+        msg_lower = mensagem_usuario.lower()
+        if "flashcard" in msg_lower or "card" in msg_lower or len(mensagem_usuario) > 20:
+            mock_flashcards = [
+                {"pergunta": "Pergunta de Exemplo 1 (Demonstração)", "resposta": f"Resposta baseada em: {mensagem_usuario[:60]}..."},
+                {"pergunta": "Pergunta de Exemplo 2 (Demonstração)", "resposta": "O banco de dados SQLite armazena tudo em um arquivo local único."},
+                {"pergunta": "Pergunta de Exemplo 3 (Demonstração)", "resposta": "O Streamlit é um framework Python para web apps de dados."}
+            ]
+            msg_add = "\n\n*(Nota: O Mentor IA não está configurado. Exibindo flashcards de exemplo para demonstração)*"
+        else:
+            msg_add = ""
+
         if isinstance(desempenho, str):
-            return "Mentor IA não está configurado. Cadastre seus estudos para usar o app normalmente."
-        materia_menor = min(desempenho, key=desempenho.get)
-        return (f"Mentor IA não está configurado. Enquanto isso, priorize estudar {materia_menor} "
-                f"(desempenho atual: {desempenho[materia_menor]:.1f}%).")
+            msg = "Mentor IA não está configurado. Cadastre seus estudos para usar o app normalmente." + msg_add
+        else:
+            materia_menor = min(desempenho, key=desempenho.get)
+            msg = (f"Mentor IA não está configurado. Enquanto isso, priorize estudar {materia_menor} "
+                   f"(desempenho atual: {desempenho[materia_menor]:.1f}%)." + msg_add)
+        return json.dumps({
+            "resposta": msg,
+            "flashcards": mock_flashcards
+        })
 
     try:
-        response = model.generate_content(prompt)
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
         return response.text.strip()
     except Exception:
+        mock_flashcards = []
+        msg_lower = mensagem_usuario.lower()
+        if "flashcard" in msg_lower or "card" in msg_lower or len(mensagem_usuario) > 20:
+            mock_flashcards = [
+                {"pergunta": "Pergunta de Exemplo 1 (Demonstração)", "resposta": f"Resposta baseada em: {mensagem_usuario[:60]}..."},
+                {"pergunta": "Pergunta de Exemplo 2 (Demonstração)", "resposta": "O banco de dados SQLite armazena tudo em um arquivo local único."},
+                {"pergunta": "Pergunta de Exemplo 3 (Demonstração)", "resposta": "O Streamlit é um framework Python para web apps de dados."}
+            ]
+            msg_add = "\n\n*(Nota: O Mentor IA falhou. Exibindo flashcards de exemplo para demonstração)*"
+        else:
+            msg_add = ""
+
         if isinstance(desempenho, str):
-            return "Mentor IA não está disponível no momento. Cadastre seus estudos para usar o app normalmente."
-        materia_menor = min(desempenho, key=desempenho.get)
-        return (f"Mentor IA não respondeu. Enquanto isso, priorize estudar {materia_menor} "
-                f"(desempenho atual: {desempenho[materia_menor]:.1f}%).")
+            msg = "Mentor IA não está disponível no momento. Cadastre seus estudos para usar o app normalmente." + msg_add
+        else:
+            materia_menor = min(desempenho, key=desempenho.get)
+            msg = (f"Mentor IA não respondeu. Enquanto isso, priorize estudar {materia_menor} "
+                   f"(desempenho atual: {desempenho[materia_menor]:.1f}%)." + msg_add)
+        return json.dumps({
+            "resposta": msg,
+            "flashcards": mock_flashcards
+        })

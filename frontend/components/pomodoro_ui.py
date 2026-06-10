@@ -135,15 +135,15 @@ def render_pomodoro_page(
     col1, col2, col3 = st.columns(3)
     with col1:
         tempo_foco = st.number_input(
-            "Pomodoro (min)", min_value=5, max_value=90, value=DEFAULT_POMODORO, step=1, key="pomodoro_tempo"
+            "Pomodoro (min)", min_value=5, max_value=90, value=st.session_state.get('pomodoro_foco', DEFAULT_POMODORO), step=1, key="pomodoro_foco"
         )
     with col2:
         pausa_curta = st.number_input(
-            "Pausa Curta (min)", min_value=1, max_value=30, value=DEFAULT_PAUSA_CURTA, step=1, key="pausa_curta_tempo"
+            "Pausa Curta (min)", min_value=1, max_value=30, value=st.session_state.get('pomodoro_pausa_curta', DEFAULT_PAUSA_CURTA), step=1, key="pomodoro_pausa_curta"
         )
     with col3:
         pausa_longa = st.number_input(
-            "Pausa Longa (min)", min_value=5, max_value=60, value=DEFAULT_PAUSA_LONGA, step=1, key="pausa_longa_tempo"
+            "Pausa Longa (min)", min_value=5, max_value=60, value=st.session_state.get('pomodoro_pausa_longa', DEFAULT_PAUSA_LONGA), step=1, key="pomodoro_pausa_longa"
         )
 
     st.write(f"**Pomodoros concluídos:** {st.session_state['pomodoro_cycles']} (a cada 4, próxima é pausa longa)")
@@ -166,7 +166,7 @@ def render_pomodoro_page(
             st.session_state["pomodoro_cycles"],
         )
         st.session_state["pomodoro_mode"] = "Pomodoro"
-        st.experimental_rerun()
+        st.rerun()
 
     iniciar_chave = f"iniciar_{modo.replace(' ', '_').lower()}"
     if st.button("▶️ Iniciar Ciclo", key=iniciar_chave):
@@ -178,7 +178,7 @@ def render_pomodoro_page(
             st.session_state["pomodoro_cycles"],
         )
         st.session_state["pomodoro_mode"] = "Pomodoro"
-        st.experimental_rerun()
+        st.rerun()
 
     st.markdown("---")
     with st.expander("📈 Registrar Desempenho após o ciclo"):
